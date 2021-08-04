@@ -1,1 +1,1 @@
-from parallelbar import progress_map
+from .parallelbar import progress_map
