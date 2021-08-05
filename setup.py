@@ -3,12 +3,21 @@ from setuptools import setup, find_packages
 
 setup(
     name='parallelbar',
-    version='0.1.9',
+    version='0.1.10',
     packages=find_packages(),
     author='Dubovik Pavel',
-    description='Parallel processing with progress bars',
-    license='MIT',
     author_email='geometryk@gmail.com',
+    description='Parallel processing with progress bars',
+    keywords=[
+        'progress bar',
+        'tqdm',
+        'parallelbar',
+        'parallel tqdm',
+        'parallel map',
+        'parallel',
+    ],
+    url='https://github.com/dubovikmaster/parallelbar',
+    license='MIT',
     install_requires=[
         'tqdm',
         'colorama',
