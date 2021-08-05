@@ -51,11 +51,13 @@ def _bar_size(chunk_size, len_tasks):
     return bar_size
 
 
-def _do_parallel(func, pool_type, tasks, chunk_size, core_progress):
+def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress):
     parent, child = mp.Pipe()
     len_tasks = get_len(tasks)
+    if not n_cpu:
+        n_cpu = mp.cpu_count()
     if not chunk_size:
-        chunk_size, extra = divmod(len_tasks, mp.cpu_count() * 4)
+        chunk_size, extra = divmod(len_tasks, n_cpu * 4)
         if extra:
             chunk_size += 1
     if core_progress:
@@ -65,7 +67,7 @@ def _do_parallel(func, pool_type, tasks, chunk_size, core_progress):
         bar_size = len_tasks
         thread = Thread(target=_process_status, args=(parent, bar_size))
     thread.start()
-    with mp.Pool() as p:
+    with mp.Pool(n_cpu) as p:
         target = partial(_process, func, child)
         method = getattr(p, pool_type)
         if pool_type == 'map':
@@ -80,17 +82,17 @@ def _do_parallel(func, pool_type, tasks, chunk_size, core_progress):
     return result
 
 
-def progress_map(func, tasks, chunk_size=None, core_progress=False):
-    result = _do_parallel(func, 'map', tasks, chunk_size, core_progress)
+def progress_map(func, tasks, n_cpu=None, chunk_size=None, core_progress=False):
+    result = _do_parallel(func, 'map', tasks, n_cpu, chunk_size, core_progress)
     return result
 
 
-def progress_imap(func, tasks, chunk_size=1, core_progress=False):
-    result = _do_parallel(func, 'imap', tasks, chunk_size, core_progress)
+def progress_imap(func, tasks, n_cpu=None, chunk_size=1, core_progress=False):
+    result = _do_parallel(func, 'imap', tasks, n_cpu, chunk_size, core_progress)
     return result
 
 
-def progress_imapu(func, tasks, chunk_size=1, core_progress=False):
-    result = _do_parallel(func, 'imap_unordered', tasks, chunk_size, core_progress)
+def progress_imapu(func, tasks, n_cpu=None, chunk_size=1, core_progress=False):
+    result = _do_parallel(func, 'imap_unordered', tasks, n_cpu, chunk_size, core_progress)
     return result
 
