@@ -39,12 +39,12 @@ def _process_status(pipe, bar_size):
         pbur.update(1)
 
 
-def _bar_size(chunk_size, len_tasks):
+def _bar_size(chunk_size, len_tasks, n_cpu):
     bar_count, extra = divmod(len_tasks, chunk_size)
-    if bar_count < mp.cpu_count():
+    if bar_count < n_cpu:
         bar_size = chunk_size
     else:
-        bar_size, extra = divmod(len_tasks, mp.cpu_count() * chunk_size)
+        bar_size, extra = divmod(len_tasks, n_cpu * chunk_size)
         bar_size = bar_size * chunk_size
         if extra:
             bar_size += chunk_size
@@ -61,7 +61,7 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress):
         if extra:
             chunk_size += 1
     if core_progress:
-        bar_size = _bar_size(chunk_size, len_tasks)
+        bar_size = _bar_size(chunk_size, len_tasks, n_cpu)
         thread = Thread(target=_core_process_status, args=(parent, bar_size))
     else:
         bar_size = len_tasks
