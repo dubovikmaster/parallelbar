@@ -5,7 +5,7 @@ import multiprocessing as mp
 from threading import Thread
 
 from tqdm.auto import tqdm
-from . import cpu_bench, fibonacci, get_len
+from .tools import get_len
 
 
 def _process(func, pipe, task):
