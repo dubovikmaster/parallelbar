@@ -27,11 +27,7 @@ tasks = [1_000_000 + i for i in range(100)]
 if __name__=='__main__':
     progress_map(cpu_bench, tasks)
 ```
-
-
-      0%|          | 0/100 [00:00<?, ?it/s]
-
-
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/first_bar.gif)
 You can display the progress on each core:
 
 
@@ -39,38 +35,7 @@ You can display the progress on each core:
 if __name__=='__main__':
     progress_map(cpu_bench, tasks, core_progress=True)
 ```
-
-
-    Core 1:   0%|          | 0/16 [00:00<?, ?it/s]
-
-
-
-    Core 2:   0%|          | 0/16 [00:00<?, ?it/s]
-
-
-
-    Core 3:   0%|          | 0/16 [00:00<?, ?it/s]
-
-
-
-    Core 4:   0%|          | 0/16 [00:00<?, ?it/s]
-
-
-
-    Core 5:   0%|          | 0/16 [00:00<?, ?it/s]
-
-
-
-    Core 6:   0%|          | 0/16 [00:00<?, ?it/s]
-
-
-
-    Core 7:   0%|          | 0/16 [00:00<?, ?it/s]
-
-
-
-    Core 8:   0%|          | 0/16 [00:00<?, ?it/s]
-
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/multiple_bar_8.gif)
 
 Ofcourse you can specify the number of cores and chunk_size:
 
@@ -81,21 +46,7 @@ if __name__=='__main__':
     progress_map(cpu_bench, tasks, n_cpu=4, chunk_size=1, core_progress=True)
 ```
 
-
-    Core 1:   0%|          | 0/25 [00:00<?, ?it/s]
-
-
-
-    Core 2:   0%|          | 0/25 [00:00<?, ?it/s]
-
-
-
-    Core 3:   0%|          | 0/25 [00:00<?, ?it/s]
-
-
-
-    Core 4:   0%|          | 0/25 [00:00<?, ?it/s]
-
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/multiple_bar_4.gif)
 
 You can also easily use **progress_imap** and **progress_imapu** analogs of the *imap* and *imap_unordered* methods of the **Pool()** class
 
@@ -107,9 +58,7 @@ if __name__=='__main__':
     result = progress_imap(fibonacci, tasks, chunk_size=1, core_progress=False)
 ```
 
-
-      0%|          | 0/15 [00:00<?, ?it/s]
-
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/one_bar_imap.gif)
 
     Wall time: 2.08 s
     
