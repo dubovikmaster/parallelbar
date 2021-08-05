@@ -5,10 +5,7 @@ import multiprocessing as mp
 from threading import Thread
 
 from tqdm.auto import tqdm
-
-
-def func_args_unpack(func, args):
-    return func(*args)
+from . import cpu_bench, fibonacci, get_len
 
 
 def _process(func, pipe, task):
@@ -54,22 +51,46 @@ def _bar_size(chunk_size, len_tasks):
     return bar_size
 
 
-def progress_map(func, tasks, chunk_size=None, core_progress=True):
+def _do_parallel(func, pool_type, tasks, chunk_size, core_progress):
     parent, child = mp.Pipe()
+    len_tasks = get_len(tasks)
     if not chunk_size:
-        chunk_size, extra = divmod(len(tasks), mp.cpu_count() * 4)
+        chunk_size, extra = divmod(len_tasks, mp.cpu_count() * 4)
         if extra:
             chunk_size += 1
     if core_progress:
-        bar_size = _bar_size(chunk_size, len(tasks))
+        bar_size = _bar_size(chunk_size, len_tasks)
         thread = Thread(target=_core_process_status, args=(parent, bar_size))
     else:
-        bar_size = len(tasks)
+        bar_size = len_tasks
         thread = Thread(target=_process_status, args=(parent, bar_size))
     thread.start()
     with mp.Pool() as p:
         target = partial(_process, func, child)
-        result = p.map(target, tasks, chunksize=chunk_size)
+        method = getattr(p, pool_type)
+        if pool_type == 'map':
+            result = method(target, tasks, chunksize=chunk_size)
+        else:
+            result = list()
+            pool = method(target, tasks, chunksize=chunk_size)
+            for res in pool:
+                result.append(res)
         child.send(None)
         thread.join()
     return result
+
+
+def progress_map(func, tasks, chunk_size=None, core_progress=False):
+    result = _do_parallel(func, 'map', tasks, chunk_size, core_progress)
+    return result
+
+
+def progress_imap(func, tasks, chunk_size=1, core_progress=False):
+    result = _do_parallel(func, 'imap', tasks, chunk_size, core_progress)
+    return result
+
+
+def progress_imapu(func, tasks, chunk_size=1, core_progress=False):
+    result = _do_parallel(func, 'imap_unordered', tasks, chunk_size, core_progress)
+    return result
+
