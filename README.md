@@ -38,6 +38,10 @@ if __name__=='__main__':
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/first_bar_.gif)
 
+Core progress:
+
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/core_progress.gif)
+
 Great! We got an acceleration of 6 times! We were also able to observe the process
 What about the progress on the cores of your cpu?
 
