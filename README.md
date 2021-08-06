@@ -4,7 +4,10 @@
 
 ## Installation
 
+    pip install parallelbar
+    or
     pip install --user git+https://github.com/dubovikmaster/parallelbar.git
+
 
 
 ## Example
