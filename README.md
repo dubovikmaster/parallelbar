@@ -36,7 +36,7 @@ if __name__=='__main__':
     progress_map(cpu_bench, tasks)
 ```
 
-![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/first_bar.gif)
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/first_bar_.gif)
 
 Great! We got an acceleration of 6 times! We were also able to observe the process
 What about the progress on the cores of your cpu?
