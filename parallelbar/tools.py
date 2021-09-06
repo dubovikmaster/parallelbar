@@ -5,12 +5,12 @@ def func_args_unpack(func, args):
     return func(*args)
 
 
-def get_len(iterable):
+def get_len(iterable, total):
     try:
-        total = iterable.__len__()
+        length = iterable.__len__()
     except AttributeError:
-        total = sum(1 for _ in iter(iterable))
-    return total
+        length = total
+    return length
 
 
 def cpu_bench(number):
