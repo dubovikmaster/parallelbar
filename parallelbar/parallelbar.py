@@ -19,7 +19,8 @@ class ProgressBar(tqdm):
         if self._value % self.step == 0 and self._value < self.total:
             super().update(self.step)
         elif self._value == self.total:
-            if extra := self._value % self.step:
+            extra = self._value % self.step
+            if extra:
                 super().update(extra)
             else:
                 super().update(self.step)
