@@ -6,7 +6,7 @@ with open('README.md', encoding='utf-8') as f:
 
 setup(
     name='parallelbar',
-    version='0.1.19',
+    version='0.2.1',
     packages=find_packages(),
     author='Dubovik Pavel',
     author_email='geometryk@gmail.com',
@@ -26,6 +26,7 @@ setup(
     install_requires=[
         'tqdm',
         'colorama',
+        'pebble'
     ],
     platforms='any'
 )

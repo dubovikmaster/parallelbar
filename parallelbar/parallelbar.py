@@ -4,6 +4,9 @@ from functools import partial
 import multiprocessing as mp
 from threading import Thread
 
+from pebble import ProcessPool
+from concurrent.futures import TimeoutError
+
 from tqdm.auto import tqdm
 from .tools import get_len
 
@@ -81,7 +84,7 @@ def _bar_size(chunk_size, len_tasks, n_cpu):
 
 
 def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
-                 context, total, bar_step, disable,
+                 context, total, bar_step, disable, process_timeout
                  ):
     parent, child = mp.Pipe()
     len_tasks = get_len(tasks, total)
@@ -98,31 +101,47 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
         bar_size = len_tasks
         thread = Thread(target=_process_status, args=(bar_size, bar_step, disable, parent))
     thread.start()
-    with mp.get_context(context).Pool(n_cpu) as p:
-        target = partial(_process, func, child)
-        method = getattr(p, pool_type)
-        if pool_type == 'map':
-            result = method(target, tasks, chunksize=chunk_size)
-        else:
+    target = partial(_process, func, child)
+    if pool_type == 'map':
+        with ProcessPool(max_workers=n_cpu, context=mp.get_context(context)) as pool:
+            future = pool.map(target, tasks, timeout=process_timeout, chunksize=chunk_size)
+            iterator = future.result()
+            result = list()
+            while True:
+                try:
+                    result.append(next(iterator))
+                except StopIteration:
+                    break
+                except TimeoutError:
+                    child.send([os.getpid()])
+                    result.append(f"function took longer than {process_timeout} seconds")
+            child.send(None)
+            thread.join()
+    else:
+        with mp.get_context(context).Pool(n_cpu) as p:
+            method = getattr(p, pool_type)
             result = list(method(target, tasks, chunksize=chunk_size))
-        child.send(None)
-        thread.join()
+            child.send(None)
+            thread.join()
     return result
 
 
 def progress_map(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None, bar_step=1,
-                 disable=False):
-    result = _do_parallel(func, 'map', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable)
+                 disable=False, process_timeout=None):
+    result = _do_parallel(func, 'map', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable,
+                          process_timeout)
     return result
 
 
-def progress_imap(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None, bar_step=1,
+def progress_imap(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None,
+                  bar_step=1,
                   disable=False):
     result = _do_parallel(func, 'imap', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable)
     return result
 
 
-def progress_imapu(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None, bar_step=1,
+def progress_imapu(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None,
+                   bar_step=1,
                    disable=False):
     result = _do_parallel(func, 'imap_unordered', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step,
                           disable)
