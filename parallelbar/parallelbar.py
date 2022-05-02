@@ -5,6 +5,7 @@ import multiprocessing as mp
 from threading import Thread
 
 from pebble import ProcessPool
+from pebble import ProcessExpired
 from concurrent.futures import TimeoutError
 
 from tqdm.auto import tqdm
@@ -115,6 +116,9 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
                 except TimeoutError:
                     child.send([os.getpid()])
                     result.append(f"function took longer than {process_timeout} seconds")
+                except ProcessExpired as error:
+                    child.send([os.getpid()])
+                    result.append(f" {error}. Exit code: {error.exitcode}")
             child.send(None)
             thread.join()
     else:
