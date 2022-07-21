@@ -6,7 +6,7 @@ with open('README.md', encoding='utf-8') as f:
 
 setup(
     name='parallelbar',
-    version='0.2.5',
+    version='0.2.6',
     packages=find_packages(),
     author='Dubovik Pavel',
     author_email='geometryk@gmail.com',
