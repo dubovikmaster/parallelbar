@@ -84,6 +84,14 @@ def _bar_size(chunk_size, len_tasks, n_cpu):
     return bar_size
 
 
+def _update_error_bar(bar_dict, bar_parameters):
+    try:
+        bar_dict['bar'].update()
+    except KeyError:
+        bar_dict['bar'] = ProgressBar(**bar_parameters)
+        bar_dict['bar'].update()
+
+
 def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
                  context, total, bar_step, disable, process_timeout,
                  ):
@@ -107,7 +115,8 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
         with ProcessPool(max_workers=n_cpu, context=mp.get_context(context)) as pool:
             future = pool.map(target, tasks, timeout=process_timeout, chunksize=chunk_size)
             iterator = future.result()
-            error_bar = ProgressBar(total=bar_size, disable=disable, position=1, desc='ERROR:', colour='red')
+            bar_parameters = dict(total=bar_size, disable=disable, position=1, desc='ERROR', colour='red')
+            error_bar = {}
             result = list()
             while True:
                 try:
@@ -115,16 +124,17 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
                 except StopIteration:
                     break
                 except TimeoutError:
-                    error_bar.update()
+                    _update_error_bar(error_bar, bar_parameters)
                     result.append(f"function {func.__name__} took longer than {process_timeout} s.")
                 except ProcessExpired as error:
-                    error_bar.update()
+                    _update_error_bar(error_bar, bar_parameters)
                     result.append(f" {error}. Exit code: {error.exitcode}")
                 except Exception as e:
-                    error_bar.update()
+                    _update_error_bar(error_bar, bar_parameters)
                     result.append(e)
+            if error_bar:
+                error_bar['bar'].close()
             child.send(None)
-            error_bar.close()
             thread.join()
     else:
         with mp.get_context(context).Pool(n_cpu) as p:
