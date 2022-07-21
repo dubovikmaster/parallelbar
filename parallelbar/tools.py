@@ -17,15 +17,15 @@ def cpu_bench(number):
     product = 1.0
     for elem in range(number):
         angle = radians(elem)
-        product *= sin(angle)**2 + cos(angle)**2
-    return product
+        product *= sin(angle) ** 2 + cos(angle) ** 2
+    return number
 
 
 def fibonacci(number):
     if number <= 1:
         return number
     else:
-        return fibonacci(number-2) + fibonacci(number-1)
+        return fibonacci(number - 2) + fibonacci(number - 1)
 
 
 def iterate_by_pack(iterable, pack_size: int = 1):
@@ -50,4 +50,3 @@ def get_packs_count(array, pack_size):
     if extra:
         total += 1
     return total
-

@@ -1,11 +1,11 @@
 import os
 from functools import partial
-
 import multiprocessing as mp
 from threading import Thread
 
 from pebble import ProcessPool
 from pebble import ProcessExpired
+
 from concurrent.futures import TimeoutError
 
 from tqdm.auto import tqdm
@@ -62,7 +62,7 @@ def _core_process_status(bar_size, bar_step, disable, pipe):
 
 
 def _process_status(bar_size, bar_step, disable, pipe):
-    bar = ProgressBar(step=bar_step, total=bar_size, disable=disable)
+    bar = ProgressBar(step=bar_step, total=bar_size, disable=disable, desc='DONE')
     while True:
         result = pipe.recv()
         if not result:
@@ -85,7 +85,7 @@ def _bar_size(chunk_size, len_tasks, n_cpu):
 
 
 def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
-                 context, total, bar_step, disable, process_timeout
+                 context, total, bar_step, disable, process_timeout,
                  ):
     parent, child = mp.Pipe()
     len_tasks = get_len(tasks, total)
@@ -107,6 +107,7 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
         with ProcessPool(max_workers=n_cpu, context=mp.get_context(context)) as pool:
             future = pool.map(target, tasks, timeout=process_timeout, chunksize=chunk_size)
             iterator = future.result()
+            error_bar = ProgressBar(total=bar_size, disable=disable, position=1, desc='ERROR:', colour='red')
             result = list()
             while True:
                 try:
@@ -114,12 +115,16 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
                 except StopIteration:
                     break
                 except TimeoutError:
-                    child.send([os.getpid()])
-                    result.append(f"function took longer than {process_timeout} seconds")
+                    error_bar.update()
+                    result.append(f"function {func.__name__} took longer than {process_timeout} s.")
                 except ProcessExpired as error:
-                    child.send([os.getpid()])
+                    error_bar.update()
                     result.append(f" {error}. Exit code: {error.exitcode}")
+                except Exception as e:
+                    error_bar.update()
+                    result.append(e)
             child.send(None)
+            error_bar.close()
             thread.join()
     else:
         with mp.get_context(context).Pool(n_cpu) as p:
@@ -130,21 +135,21 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
     return result
 
 
-def progress_map(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None, bar_step=1,
+def progress_map(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context=None, total=None, bar_step=1,
                  disable=False, process_timeout=None):
     result = _do_parallel(func, 'map', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable,
                           process_timeout)
     return result
 
 
-def progress_imap(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None,
+def progress_imap(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context=None, total=None,
                   bar_step=1,
                   disable=False):
     result = _do_parallel(func, 'imap', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable)
     return result
 
 
-def progress_imapu(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context='spawn', total=None,
+def progress_imapu(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context=None, total=None,
                    bar_step=1,
                    disable=False):
     result = _do_parallel(func, 'imap_unordered', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step,
