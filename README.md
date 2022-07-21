@@ -1,6 +1,8 @@
+
 ## Parallelbar
 
-**Parallelbar** displays the progress of tasks in the process pool for methods such as **map**, **imap** and **imap_unordered**. Parallelbar is based on the [tqdm](https://github.com/tqdm/tqdm) module and the standard python [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) library.
+**Parallelbar** displays the progress of tasks in the process pool for methods such as **map**, **imap** and **imap_unordered**. Parallelbar is based on the [tqdm](https://github.com/tqdm/tqdm) module and the standard python [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) library. 
+Starting from version 0.2.0, the **ProcessPoll** class of the [pebble](https://github.com/noxdafox/pebble) library is used to implement the **map** method. Thanks to this, it became possible to handle exceptions that occur within a separate process and also set a timeout for the execution of a task by a process.
 
 ## Installation
 
@@ -10,7 +12,7 @@
 
 
 
-## Example
+## Usage
 
 
 ```python
@@ -49,14 +51,6 @@ Great! We got an acceleration of 6 times! We were also able to observe the proce
 What about the progress on the cores of your cpu?
 
 
-```python
-if __name__=='__main__':
-    progress_map(cpu_bench, tasks, core_progress=True)
-```
-![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/multiple_bar_8.gif)
-
-Ofcourse you can specify the number of cores and chunk_size:
-
 
 ```python
 if __name__=='__main__':
@@ -78,29 +72,56 @@ if __name__=='__main__':
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/one_bar_imap.gif)
 
-    Wall time: 2.08 s
-    
-
+## New in version 0.2.0
+Thanks to the [pebble](https://github.com/noxdafox/pebble), it is now possible to handle exceptions and set timeouts for the execution of tasks by the process in the **progress_map** function.   
+Consider the following toy example:
 
 ```python
-result
+def foo(n):
+    if n==5 or n==17:
+        1/0
+    elif n==10:
+        time.sleep(2)
+    else:
+        time.sleep(1)
+    return n
+if __name__=='__main__':
+	res = progress_map(foo, range(20), process_timeout=5, n_cpu=8)
+```
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/error_bar_2.gif)
+As you can see, under the main progress bar, another progress bar has appeared that displays the number of tasks that ended unsuccessfully. At the same time, the main bar turned orange, as if signaling something went wrong
+```python
+print(res)
+	[0, 1, 2, 3, 4, ZeroDivisionError('division by zero'), 6, 7, 8, 9, 10, 11, 12,
+     13, 14, 15, 16, ZeroDivisionError('division by zero'), 18, 19]
+```
+ In the resulting array, we have exceptions in the corresponding places. Also, we can see the exception traceback:
+```python
+print(res[5].traceback)
+Traceback (most recent call last):
+  File "/home/padu/anaconda3/envs/work/lib/python3.9/site-packages/pebble/common.py", line 174, in process_execute
+    return function(*args, **kwargs)
+  File "/home/padu/anaconda3/envs/work/lib/python3.9/site-packages/parallelbar/parallelbar.py", line 48, in _process
+    result = func(task)
+  File "/tmp/ipykernel_70395/285585760.py", line 3, in foo
+    1/0
+ZeroDivisionError: division by zero
+```
+From which concept at what place in the code the exception occurred. 
+Let's add a timeout of 1.5 seconds for each process. If the process execution time exceeds 1.5 seconds, an appropriate exception will be raised and handled. In this case, the process will restart and continue to work (thanks to **pebble**)
+```python
+if __name__=='__main__':
+	res = progress_map(foo, range(20), process_timeout=1.5, n_cpu=8)
+```
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/error_bar_1.gif)
+```python
+print(res)
+	[0, 1, 2, 3, 4, ZeroDivisionError('division by zero'), 6, 7, 8, 9, 'function foo took longer than 1.5 s.', 
+	11, 12, 13, 14, 15, 16, ZeroDivisionError('division by zero'), 18, 19]
 ```
 
-    [6765,
-     10946,
-     17711,
-     28657,
-     46368,
-     75025,
-     121393,
-     196418,
-     317811,
-     514229,
-     832040,
-     1346269,
-     2178309,
-     3524578,
-     5702887]
+
+
 
 ## Problems of the naive approach
 Why can't I do something simpler? Let's take the standard **imap** method and run through it in a loop with **tqdm** and take the results from the processes:
