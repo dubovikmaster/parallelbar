@@ -9,7 +9,8 @@ from pebble import ProcessExpired
 from concurrent.futures import TimeoutError
 
 from tqdm.auto import tqdm
-from .tools import get_len
+from tools import get_len
+import time
 
 
 class ProgressBar(tqdm):
@@ -34,6 +35,12 @@ class ProgressBar(tqdm):
     def update(self):
         self._value += 1
         self._update()
+
+    def close(self):
+        super().close()
+        if hasattr(self, 'disp'):
+            if self.total and self._value < self.total:
+                self.disp(bar_style='warning')
 
 
 def _process(func, pipe, task):
@@ -165,3 +172,17 @@ def progress_imapu(func, tasks, n_cpu=None, chunk_size=None, core_progress=False
     result = _do_parallel(func, 'imap_unordered', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step,
                           disable)
     return result
+
+
+def foo(n):
+    if n == 50:
+        1 / 0
+    elif n == 10:
+        time.sleep(2)
+    else:
+        time.sleep(.5)
+    return n
+
+
+if __name__ == '__main__':
+    res = progress_map(foo, range(20), process_timeout=15)
