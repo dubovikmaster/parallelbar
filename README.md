@@ -89,6 +89,7 @@ if __name__=='__main__':
 	res = progress_map(foo, range(20), process_timeout=5, n_cpu=8)
 ```
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/error_bar_2.gif)
+
 As you can see, under the main progress bar, another progress bar has appeared that displays the number of tasks that ended unsuccessfully. At the same time, the main bar turned orange, as if signaling something went wrong
 ```python
 print(res)
@@ -120,6 +121,7 @@ print(res)
 	11, 12, 13, 14, 15, 16, ZeroDivisionError('division by zero'), 18, 19]
 ```
 
+Exception handling has also been added to methods **progress_imap** and **progress_imapu**. 
 
 
 
