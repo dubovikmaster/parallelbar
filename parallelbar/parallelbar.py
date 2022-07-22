@@ -182,4 +182,3 @@ def progress_imapu(func, tasks, n_cpu=None, chunk_size=1, core_progress=False, c
     result = _do_parallel(func, 'imap_unordered', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step,
                           disable, None)
     return result
-
