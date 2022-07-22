@@ -1,5 +1,5 @@
 
-## Parallelbar
+# Parallelbar
 
 **Parallelbar** displays the progress of tasks in the process pool for methods such as **map**, **imap** and **imap_unordered**. Parallelbar is based on the [tqdm](https://github.com/tqdm/tqdm) module and the standard python [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) library. 
 Starting from version 0.2.0, the **ProcessPoll** class of the [pebble](https://github.com/noxdafox/pebble) library is used to implement the **map** method. Thanks to this, it became possible to handle exceptions that occur within a separate process and also set a timeout for the execution of a task by a process.
@@ -122,6 +122,36 @@ print(res)
 ```
 
 Exception handling has also been added to methods **progress_imap** and **progress_imapu**. 
+
+## New in version 0.2.10
+
+1. The `process_timeout` keyword argument has been added to the **progress_imap** and **progress_imapu** methods (**can be used only if `chunk_size=1`!**) 
+2. The **stopit_after_timeout** decorator has been added to the **tools** module. 
+3. Fixed a bug that caused the **progrees_imap** and **progress_imapu** methods to hang if `chunk_size > 1`
+
+Example of using a decorator
+
+```python
+from parallelbar.tools import stopit_after_timeout
+import time
+
+# abort function execution after timeout in seconds
+@stopit_after_timeout(1, raise_exception=False)
+def foo():
+    for _ in range(5):
+        time.sleep(2)
+        
+if __name__ == '__main__':
+    start = time.time()
+    print(foo())
+    print(f'time took {time.time()-start} s.')
+```
+```
+time took  1.010124 s.
+'function foo took longer than 1 s.'
+```
+As you can see, instead of 5 seconds of execution, the function was interrupted after 1 second of timeout. 
+If `raise_exception=True`, a **TimeoutError** exception will be raised.
 
 
 
