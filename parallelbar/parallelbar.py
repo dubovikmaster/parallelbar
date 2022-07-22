@@ -146,7 +146,7 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
             iter_result = method(target, tasks, chunksize=chunk_size)
             while 1:
                 try:
-                    result.append(iter_result.next())
+                    result.append(next(iter_result))
                 except StopIteration:
                     break
                 except Exception as e:
