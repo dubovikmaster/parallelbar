@@ -1,4 +1,6 @@
 from math import sin, cos, radians
+import threading
+import _thread as thread
 
 
 def func_args_unpack(func, args):
@@ -50,3 +52,32 @@ def get_packs_count(array, pack_size):
     if extra:
         total += 1
     return total
+
+
+def stop_function():
+    thread.interrupt_main()
+
+
+def stopit_after_timeout(s, raise_exception=True):
+    def actual_decorator(func):
+        def wrapper(*args, **kwargs):
+            timer = threading.Timer(s, stop_function)
+            timer.start()
+            try:
+                result = func(*args, **kwargs)
+            except KeyboardInterrupt:
+                msg = f'function {func.__name__} took longer than {s} s.'
+                if raise_exception:
+                    raise TimeoutError(msg)
+                result = msg
+            finally:
+                timer.cancel()
+            return result
+
+        return wrapper
+
+    return actual_decorator
+
+
+def _wrapped_func(func, s,  *args, **kwargs):
+    return stopit_after_timeout(s)(func)(*args, **kwargs)

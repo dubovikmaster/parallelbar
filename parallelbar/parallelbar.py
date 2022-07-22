@@ -11,6 +11,7 @@ from concurrent.futures import TimeoutError
 
 from tqdm.auto import tqdm
 from tools import get_len
+from tools import _wrapped_func
 
 
 class ProgressBar(tqdm):
@@ -118,7 +119,7 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
         thread = Thread(target=_process_status, args=(bar_size, bar_step, disable, parent))
     thread.start()
     target = partial(_process, func, child)
-    bar_parameters = dict(total=bar_size, disable=disable, position=1, desc='ERROR', colour='red')
+    bar_parameters = dict(total=len_tasks, disable=disable, position=1, desc='ERROR', colour='red')
     error_bar = {}
     result = list()
     if pool_type == 'map':
@@ -167,18 +168,27 @@ def progress_map(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, 
 
 
 def progress_imap(func, tasks, n_cpu=None, chunk_size=1, core_progress=False, context=None, total=None,
-                  bar_step=1, disable=False):
+                  bar_step=1, disable=False, process_timeout=None):
+    if process_timeout and chunk_size != 1:
+        raise ValueError('the process_timeout can only be used if chunk_size=1')
     if isinstance(tasks, abc.Iterator) and not total:
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
+    if process_timeout:
+        func = partial(_wrapped_func, func, process_timeout)
     result = _do_parallel(func, 'imap', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable,
                           None)
     return result
 
 
 def progress_imapu(func, tasks, n_cpu=None, chunk_size=1, core_progress=False, context=None, total=None,
-                   bar_step=1, disable=False):
+                   bar_step=1, disable=False, process_timeout=None):
+    if process_timeout and chunk_size != 1:
+        raise ValueError('the process_timeout can only be used if chunk_size=1')
     if isinstance(tasks, abc.Iterator) and not total:
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
+    if process_timeout:
+        func = partial(_wrapped_func, func, process_timeout)
     result = _do_parallel(func, 'imap_unordered', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step,
                           disable, None)
     return result
+
