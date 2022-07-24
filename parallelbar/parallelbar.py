@@ -100,7 +100,7 @@ def _update_error_bar(bar_dict, bar_parameters):
         bar_dict['bar'].update()
 
 
-def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
+def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, core_progress,
                  context, total, bar_step, disable, process_timeout,
                  ):
     parent, child = mp.Pipe()
@@ -123,7 +123,8 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
     error_bar = {}
     result = list()
     if pool_type == 'map':
-        with ProcessPool(max_workers=n_cpu, context=mp.get_context(context)) as pool:
+        with ProcessPool(initializer=initializer, initargs=initargs, max_workers=n_cpu,
+                         context=mp.get_context(context)) as pool:
             future = pool.map(target, tasks, timeout=process_timeout, chunksize=chunk_size)
             iterator = future.result()
             while True:
@@ -141,7 +142,7 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
                     _update_error_bar(error_bar, bar_parameters)
                     result.append(e)
     else:
-        with mp.get_context(context).Pool(n_cpu) as p:
+        with mp.get_context(context).Pool(n_cpu, initializer=initializer, initargs=initargs) as p:
             result = list()
             method = getattr(p, pool_type)
             iter_result = method(target, tasks, chunksize=chunk_size)
@@ -160,14 +161,17 @@ def _do_parallel(func, pool_type, tasks, n_cpu, chunk_size, core_progress,
     return result
 
 
-def progress_map(func, tasks, n_cpu=None, chunk_size=None, core_progress=False, context=None, total=None, bar_step=1,
+def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, core_progress=False,
+                 context=None, total=None, bar_step=1,
                  disable=False, process_timeout=None):
-    result = _do_parallel(func, 'map', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable,
+    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, core_progress, context, total,
+                          bar_step, disable,
                           process_timeout)
     return result
 
 
-def progress_imap(func, tasks, n_cpu=None, chunk_size=1, core_progress=False, context=None, total=None,
+def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, core_progress=False,
+                  context=None, total=None,
                   bar_step=1, disable=False, process_timeout=None):
     if process_timeout and chunk_size != 1:
         raise ValueError('the process_timeout can only be used if chunk_size=1')
@@ -175,12 +179,14 @@ def progress_imap(func, tasks, n_cpu=None, chunk_size=1, core_progress=False, co
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
     if process_timeout:
         func = partial(_wrapped_func, func, process_timeout)
-    result = _do_parallel(func, 'imap', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step, disable,
+    result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, core_progress, context, total,
+                          bar_step, disable,
                           None)
     return result
 
 
-def progress_imapu(func, tasks, n_cpu=None, chunk_size=1, core_progress=False, context=None, total=None,
+def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, core_progress=False,
+                   context=None, total=None,
                    bar_step=1, disable=False, process_timeout=None):
     if process_timeout and chunk_size != 1:
         raise ValueError('the process_timeout can only be used if chunk_size=1')
@@ -188,7 +194,7 @@ def progress_imapu(func, tasks, n_cpu=None, chunk_size=1, core_progress=False, c
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
     if process_timeout:
         func = partial(_wrapped_func, func, process_timeout)
-    result = _do_parallel(func, 'imap_unordered', tasks, n_cpu, chunk_size, core_progress, context, total, bar_step,
+    result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size, core_progress,
+                          context, total, bar_step,
                           disable, None)
     return result
-

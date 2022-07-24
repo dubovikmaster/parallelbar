@@ -1,6 +1,9 @@
 from math import sin, cos, radians
 import threading
 import _thread as thread
+import platform
+import os
+import signal
 
 
 def func_args_unpack(func, args):
@@ -55,7 +58,10 @@ def get_packs_count(array, pack_size):
 
 
 def stop_function():
-    thread.interrupt_main()
+    if platform.system() == 'Windows':
+        thread.interrupt_main()
+    else:
+        os.kill(os.getpid(), signal.SIGINT)
 
 
 def stopit_after_timeout(s, raise_exception=True):
@@ -79,5 +85,5 @@ def stopit_after_timeout(s, raise_exception=True):
     return actual_decorator
 
 
-def _wrapped_func(func, s,  *args, **kwargs):
-    return stopit_after_timeout(s)(func)(*args, **kwargs)
+def _wrapped_func(func, s, raise_exception, *args, **kwargs):
+    return stopit_after_timeout(s, raise_exception=raise_exception)(func)(*args, **kwargs)
