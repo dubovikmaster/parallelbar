@@ -178,7 +178,7 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
     if isinstance(tasks, abc.Iterator) and not total:
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
     if process_timeout:
-        func = partial(_wrapped_func, func, process_timeout)
+        func = partial(_wrapped_func, func, process_timeout, True)
     result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, core_progress, context, total,
                           bar_step, disable,
                           None)
@@ -193,7 +193,7 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
     if isinstance(tasks, abc.Iterator) and not total:
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
     if process_timeout:
-        func = partial(_wrapped_func, func, process_timeout)
+        func = partial(_wrapped_func, func, process_timeout, True)
     result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size, core_progress,
                           context, total, bar_step,
                           disable, None)
