@@ -182,7 +182,7 @@ It looks good, doesn't it? But let's do the following, make the first task very 
 if __name__=='__main__':
     with Pool() as p:
         tasks = [20 + i for i in range(15)]
-        tasks.insert(1, 38)
+        tasks.insert(0, 39)
         pool = p.imap_unordered(fibonacci, tasks)
         result = []
         for i in tqdm(pool, total=len(tasks)):
@@ -196,10 +196,9 @@ Let's try to do the same experiment only for the progress_imap function:
 
 ```python
 if __name__=='__main__':
-    with Pool() as p:
-        tasks = [20 + i for i in range(15)]
-        tasks.insert(1, 38)
-        result = progress_imap(fibonacci, tasks)
+    tasks = [20 + i for i in range(15)]
+    tasks.insert(0, 39)
+    result = progress_imap(fibonacci, tasks)
 ```
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/imap_naive_3.gif)
