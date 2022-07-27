@@ -2,6 +2,7 @@ import os
 from functools import partial
 from collections import abc
 import multiprocessing as mp
+from threading import Thread
 
 from pebble import ProcessPool
 from pebble import ProcessExpired
@@ -112,10 +113,10 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
             chunk_size += 1
     if core_progress:
         bar_size = _bar_size(chunk_size, len_tasks, n_cpu)
-        proc = mp.Process(target=_core_process_status, args=(bar_size, bar_step, disable, q))
+        proc = Thread(target=_core_process_status, args=(bar_size, bar_step, disable, q))
     else:
         bar_size = len_tasks
-        proc = mp.Process(target=_process_status, args=(bar_size, bar_step, disable, q))
+        proc = Thread(target=_process_status, args=(bar_size, bar_step, disable, q))
     proc.start()
     target = partial(_process, func, q)
     bar_parameters = dict(total=len_tasks, disable=disable, position=1, desc='ERROR', colour='red')

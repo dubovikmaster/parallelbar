@@ -4,6 +4,7 @@ import _thread as thread
 import platform
 import os
 import signal
+from functools import wraps
 
 
 def func_args_unpack(func, args):
@@ -66,6 +67,7 @@ def stop_function():
 
 def stopit_after_timeout(s, raise_exception=True):
     def actual_decorator(func):
+        @wraps(func)
         def wrapper(*args, **kwargs):
             timer = threading.Timer(s, stop_function)
             timer.start()
