@@ -153,11 +153,107 @@ time took  1.010124 s.
 As you can see, instead of 5 seconds of execution, the function was interrupted after 1 second of timeout. 
 If `raise_exception=True`, a **TimeoutError** exception will be raised.
 
+## New in version 0.3.0
+1. The `error_behavior` keyword argument has been added to the **progress_map**, **progress_imap** and **progress_imapu** methods. 
+Must be one of the values: "raise", "ignore", "coerce". 
+     - "raise" - raise an exception thrown in the process pool.
+     - "ignore" - ignore the exceptions that occur. Do not add anything to the result
+     - "coerce" - handle the exception. The result will include the value set by the parameter `set_error_value` (by default None - the traceback of the raised exception will be added to the result)
+2. The `set_error_value` keyword argument has been added to the **progress_map**, **progress_imap** and **progress_imapu** methods.
+
+Example of usage
+
+```python
+import time
+import resource as rs
+from parallelbar import progress_imap
+
+
+def memory_limit(limit):
+    soft, hard = rs.getrlimit(rs.RLIMIT_AS)
+    rs.setrlimit(rs.RLIMIT_AS, (limit, hard))
+
+
+def my_awesome_foo(n):
+    if n == 0:
+        s = 'a' * 10000000
+    elif n == 20:
+        time.sleep(100)
+    else:
+        time.sleep(1)
+    return n
+
+
+if __name__ == '__main__':
+    tasks = range(30)
+    start = time.monotonic()
+    result = progress_imap(my_awesome_foo, tasks, 
+                           process_timeout=1.5, 
+                           initializer=memory_limit, 
+                           initargs=(100,),
+                           n_cpu=4,
+                           error_behavior='coerce',
+                           set_error_value=None,
+                           )
+    print(f'time took: {time.monotonic() - start:.1f}')
+    print(result)
+```
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/test-new.gif)
+```
+time took: 8.2
+[MemoryError(), 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 
+16, 17, 18, 19, TimeoutError('function "my_awesome_foo" took longer than 1.5 s.'), 21, 22, 23, 24, 25, 26, 27, 28, 29]
+```
+Set NaN instead of tracebacks to the result of the pool operation:
+```python
+if __name__ == '__main__':
+    tasks = range(30)
+    start = time.monotonic()
+    result = progress_imap(my_awesome_foo, tasks, 
+                           process_timeout=1.5, 
+                           initializer=memory_limit, 
+                           initargs=(100,),
+                           n_cpu=4,
+                           error_behavior='coerce',
+                           set_error_value=float('nan'),
+                           )
+    print(f'time took: {time.monotonic() - start:.1f}')
+    print(result)
+```
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/test-new.gif)
+```
+time took: 8.0
+[nan, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 
+16, 17, 18, 19, nan, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+```
+Let's ignore exception:
+```python
+if __name__ == '__main__':
+    tasks = range(30)
+    start = time.monotonic()
+    result = progress_imap(my_awesome_foo, tasks, 
+                           process_timeout=1.5, 
+                           initializer=memory_limit, 
+                           initargs=(100,),
+                           n_cpu=4,
+                           error_behavior='ignore',
+                           set_error_value=None,
+                           )
+    print(f'time took: {time.monotonic() - start:.1f}')
+    print(result)
+```
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/test-new.gif)
+```
+time took: 8.0
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 
+16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+```
+
+
 
 
 ## Problems of the naive approach
 Why can't I do something simpler? Let's take the standard **imap** method and run through it in a loop with **tqdm** and take the results from the processes:
-
 ```python
 from multiprocessing import Pool
 from tqdm.auto import tqdm

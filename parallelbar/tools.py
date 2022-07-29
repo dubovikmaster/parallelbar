@@ -70,11 +70,11 @@ def stopit_after_timeout(s, raise_exception=True):
         @wraps(func)
         def wrapper(*args, **kwargs):
             timer = threading.Timer(s, stop_function)
-            timer.start()
             try:
+                timer.start()
                 result = func(*args, **kwargs)
             except KeyboardInterrupt:
-                msg = f'function {func.__name__} took longer than {s} s.'
+                msg = f'function \"{func.__name__}\" took longer than {s} s.'
                 if raise_exception:
                     raise TimeoutError(msg)
                 result = msg
