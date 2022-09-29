@@ -4,8 +4,8 @@ from collections import abc
 import multiprocessing as mp
 from threading import Thread
 from tqdm.auto import tqdm
-from tools import get_len
-from tools import _wrapped_func
+from .tools import get_len
+from .tools import _wrapped_func
 
 
 class ProgressBar(tqdm):
