@@ -3,15 +3,9 @@ from functools import partial
 from collections import abc
 import multiprocessing as mp
 from threading import Thread
-
-from pebble import ProcessPool
-from pebble import ProcessExpired
-
-from concurrent.futures import TimeoutError
-
 from tqdm.auto import tqdm
-from .tools import get_len
-from .tools import _wrapped_func
+from tools import get_len
+from tools import _wrapped_func
 
 
 class ProgressBar(tqdm):
@@ -44,40 +38,29 @@ class ProgressBar(tqdm):
                 self.disp(bar_style='warning')
 
 
-def _process(func, q, task):
-    result = func(task)
-    q.put(os.getpid())
-    return result
-
-
-def _core_process_status(bar_size, bar_step, disable, q):
-    pid_dict = dict()
-    i = 0
-    while True:
-        result = q.get()
-        if not result:
-            for val in pid_dict.values():
-                val.close()
-            break
-        try:
-            pid_dict[result].update()
-        except KeyError:
-            i += 1
-            position = len(pid_dict)
-            pid_dict[result] = ProgressBar(step=bar_step, total=bar_size, position=position, desc=f'Core {i}',
-                                           disable=disable)
-            pid_dict[result].update()
+def _update_error_bar(bar_dict, bar_parameters):
+    try:
+        bar_dict['bar'].update()
+    except KeyError:
+        bar_dict['bar'] = ProgressBar(**bar_parameters)
+        bar_dict['bar'].update()
 
 
 def _process_status(bar_size, bar_step, disable, q):
     bar = ProgressBar(step=bar_step, total=bar_size, disable=disable, desc='DONE')
+    error_bar_parameters = dict(total=bar_size, disable=disable, position=1, desc='ERROR', colour='red')
+    error_bar = {}
     while True:
         result = q.get()
         if not result:
             bar.close()
+            if error_bar:
+                error_bar['bar'].close()
             break
-
-        bar.update()
+        if result == 'e':
+            _update_error_bar(error_bar, error_bar_parameters)
+        else:
+            bar.update()
 
 
 def _bar_size(chunk_size, len_tasks, n_cpu):
@@ -92,33 +75,29 @@ def _bar_size(chunk_size, len_tasks, n_cpu):
     return bar_size
 
 
-def _update_error_bar(bar_dict, bar_parameters):
+def func_wrapped(func, error_handling, set_error_value, q, task):
     try:
-        bar_dict['bar'].update()
-    except KeyError:
-        bar_dict['bar'] = ProgressBar(**bar_parameters)
-        bar_dict['bar'].update()
-
-
-def _error_behavior(error_handling, msgs, result, set_error_value, q):
-    if error_handling == 'raise':
-        q.put(None)
-        raise
-    elif error_handling == 'ignore':
-        pass
-    elif error_handling == 'coerce':
-        if set_error_value is None:
-            set_error_value = msgs
-        result.append(set_error_value)
+        result = func(task)
+        q.put(os.getpid())
+    except Exception as e:
+        if error_handling == 'raise':
+            q.put('e')
+            q.put(None)
+            raise
+        else:
+            q.put('e')
+            if set_error_value is None:
+                return e
+            return set_error_value
     else:
-        raise ValueError(
-            'Invalid error_handling value specified. Must be one of the values: "raise", "ignore", "coerce"')
+        return result
 
 
-def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, core_progress,
-                 context, total, bar_step, disable, process_timeout, error_behavior, set_error_value,
+def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, bar_step, disable,
+                 error_behavior, set_error_value, executor
                  ):
     q = mp.Manager().Queue()
+    func_new = partial(func_wrapped, func, error_behavior, set_error_value, q)
     len_tasks = get_len(tasks, total)
     if not n_cpu:
         n_cpu = mp.cpu_count()
@@ -126,92 +105,72 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
         chunk_size, extra = divmod(len_tasks, n_cpu * 4)
         if extra:
             chunk_size += 1
-    if core_progress:
-        bar_size = _bar_size(chunk_size, len_tasks, n_cpu)
-        thread = Thread(target=_core_process_status, args=(bar_size, bar_step, disable, q), daemon=True)
-    else:
-        bar_size = len_tasks
-        thread = Thread(target=_process_status, args=(bar_size, bar_step, disable, q), daemon=True)
+    bar_size = len_tasks
+    thread = Thread(target=_process_status, args=(bar_size, bar_step, disable, q))
     thread.start()
-    target = partial(_process, func, q)
-    bar_parameters = dict(total=len_tasks, disable=disable, position=1, desc='ERROR', colour='red')
-    error_bar = {}
-    result = list()
-    if pool_type == 'map':
-        with ProcessPool(initializer=initializer, initargs=initargs, max_workers=n_cpu,
-                         context=mp.get_context(context)) as pool:
-            future = pool.map(target, tasks, timeout=process_timeout, chunksize=chunk_size)
-            iterator = future.result()
-            while True:
-                try:
-                    result.append(next(iterator))
-                except StopIteration:
-                    break
-                except TimeoutError:
-                    _update_error_bar(error_bar, bar_parameters)
-                    _error_behavior(error_behavior,
-                                    f"function \"{func.__name__}\" took longer than {process_timeout} s.", result,
-                                    set_error_value, q)
-                except ProcessExpired as e:
-                    _update_error_bar(error_bar, bar_parameters)
-                    _error_behavior(error_behavior, f" {e}. Exit code: {e.exitcode}", result, set_error_value, q)
-                except Exception as e:
-                    _update_error_bar(error_bar, bar_parameters)
-                    _error_behavior(error_behavior, e, result, set_error_value, q)
+    if executor == 'threads':
+        exc_pool = mp.pool.ThreadPool(n_cpu, initializer=initializer, initargs=initargs)
     else:
-        with mp.get_context(context).Pool(n_cpu, initializer=initializer, initargs=initargs) as p:
+        exc_pool = mp.get_context(context).Pool(n_cpu, initializer=initializer, initargs=initargs)
+    with exc_pool as p:
+        if pool_type == 'map':
+            result = p.map(func_new, tasks, chunksize=chunk_size)
+        else:
             result = list()
             method = getattr(p, pool_type)
-            iter_result = method(target, tasks, chunksize=chunk_size)
+            iter_result = method(func_new, tasks, chunksize=chunk_size)
             while 1:
                 try:
                     result.append(next(iter_result))
                 except StopIteration:
                     break
-                except Exception as e:
-                    _update_error_bar(error_bar, bar_parameters)
-                    _error_behavior(error_behavior, e, result, set_error_value, q)
-    if error_bar:
-        error_bar['bar'].close()
     q.put(None)
     thread.join()
     return result
 
 
-def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, core_progress=False,
-                 context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='coerce',
-                 set_error_value=None,
+def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None,
+                 context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
+                 set_error_value=None, executor='processes'
                  ):
-    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, core_progress, context, total,
-                          bar_step, disable, process_timeout, error_behavior, set_error_value)
+    if error_behavior not in ['raise', 'coerce']:
+        raise ValueError(
+            'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
+    if process_timeout:
+        func = partial(_wrapped_func, func, process_timeout, True)
+    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
+                          bar_step, disable, error_behavior, set_error_value, executor)
     return result
 
 
-def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, core_progress=False,
-                  context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='coerce',
-                  set_error_value=None,
+def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1,
+                  context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
+                  set_error_value=None, executor='processes'
                   ):
-    if process_timeout and chunk_size != 1:
-        raise ValueError('the process_timeout can only be used if chunk_size=1')
+    if error_behavior not in ['raise', 'coerce']:
+        raise ValueError(
+            'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
     if isinstance(tasks, abc.Iterator) and not total:
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
     if process_timeout:
         func = partial(_wrapped_func, func, process_timeout, True)
-    result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, core_progress, context, total,
-                          bar_step, disable, None, error_behavior, set_error_value)
+    result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
+                          bar_step, disable, error_behavior, set_error_value, executor)
     return result
 
 
-def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, core_progress=False,
-                   context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='coerce',
-                   set_error_value=None,
+def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1,
+                   context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
+                   set_error_value=None, executor='processes'
                    ):
-    if process_timeout and chunk_size != 1:
-        raise ValueError('the process_timeout can only be used if chunk_size=1')
+    if error_behavior not in ['raise', 'coerce']:
+        raise ValueError(
+            'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
     if isinstance(tasks, abc.Iterator) and not total:
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
     if process_timeout:
         func = partial(_wrapped_func, func, process_timeout, True)
-    result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size, core_progress,
-                          context, total, bar_step, disable, None, error_behavior, set_error_value)
+    result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size,
+                          context, total, bar_step, disable, error_behavior, set_error_value, executor)
     return result
+

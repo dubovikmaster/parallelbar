@@ -1,3 +1,2 @@
-colorama==0.4.5
-Pebble==4.6.3
-tqdm==4.64.0
+colorama>=0.4.5
+tqdm>=4.64.0
