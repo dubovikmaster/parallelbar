@@ -2,7 +2,7 @@
 # Parallelbar
 
 **Parallelbar** displays the progress of tasks in the process pool for methods such as **map**, **imap** and **imap_unordered**. Parallelbar is based on the [tqdm](https://github.com/tqdm/tqdm) module and the standard python [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) library. 
-Starting from version 0.2.0, the **ProcessPoll** class of the [pebble](https://github.com/noxdafox/pebble) library is used to implement the **map** method. Thanks to this, it became possible to handle exceptions that occur within a separate process and also set a timeout for the execution of a task by a process.
+Also, it is possible to handle exceptions that occur within a separate process, as well as set a timeout for the execution of a task by a process.
 
 ## Installation
 
@@ -72,8 +72,8 @@ if __name__=='__main__':
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/one_bar_imap.gif)
 
-## New in version 0.2.0
-Thanks to the [pebble](https://github.com/noxdafox/pebble), it is now possible to handle exceptions and set timeouts for the execution of tasks by the process in the **progress_map** function.   
+## Exception handling
+You can handle exceptions and set timeouts for the execution of tasks by the process.   
 Consider the following toy example:
 
 ```python
@@ -121,37 +121,7 @@ print(res)
 	11, 12, 13, 14, 15, 16, ZeroDivisionError('division by zero'), 18, 19]
 ```
 
-Exception handling has also been added to methods **progress_imap** and **progress_imapu**. 
-
-## New in version 0.2.10
-
-1. The `process_timeout` keyword argument has been added to the **progress_imap** and **progress_imapu** methods (**can be used only if `chunk_size=1`!**) 
-2. The **stopit_after_timeout** decorator has been added to the **tools** module. 
-3. Fixed a bug that caused the **progrees_imap** and **progress_imapu** methods to hang if `chunk_size > 1`
-
-Example of using a decorator
-
-```python
-from parallelbar.tools import stopit_after_timeout
-import time
-
-# abort function execution after timeout in seconds
-@stopit_after_timeout(1, raise_exception=False)
-def foo():
-    for _ in range(5):
-        time.sleep(2)
-        
-if __name__ == '__main__':
-    start = time.time()
-    print(foo())
-    print(f'time took {time.time()-start} s.')
-```
-```
-time took  1.010124 s.
-'function foo took longer than 1 s.'
-```
-As you can see, instead of 5 seconds of execution, the function was interrupted after 1 second of timeout. 
-If `raise_exception=True`, a **TimeoutError** exception will be raised.
+Exception handling has also been added to methods **progress_imap** and **progress_imapu**.
 
 ## New in version 0.3.0
 1. The `error_behavior` keyword argument has been added to the **progress_map**, **progress_imap** and **progress_imapu** methods. 
@@ -249,8 +219,13 @@ time took: 8.0
 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29]
 ```
 
-
-
+## New in version 1.0
+1. The "ignore" value of the `error_behavior` key parameter is no longer supported.
+2. Default value of key parameter `error_behavior` changed to "raise".
+3. The [pebble](https://github.com/noxdafox/pebble) module is no longer used.
+4. Added key parameter `executor` in the functions `progress_map`, `progress_imap` and `progress_imapu`. Must be one of the values:
+   - "threads" - use thread pool
+   - "processes" - use processes pool (default)
 
 ## Problems of the naive approach
 Why can't I do something simpler? Let's take the standard **imap** method and run through it in a loop with **tqdm** and take the results from the processes:
