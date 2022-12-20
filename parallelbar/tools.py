@@ -85,7 +85,3 @@ def stopit_after_timeout(s, raise_exception=True):
         return wrapper
 
     return actual_decorator
-
-
-def _wrapped_func(func, s, raise_exception, *args, **kwargs):
-    return stopit_after_timeout(s, raise_exception=raise_exception)(func)(*args, **kwargs)

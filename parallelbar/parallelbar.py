@@ -4,9 +4,10 @@ import multiprocessing as mp
 from threading import Thread
 from tqdm.auto import tqdm
 from .tools import get_len
-from .tools import _wrapped_func
+from .tools import stopit_after_timeout
 import time
 from itertools import count
+import warnings
 
 try:
     import dill
@@ -150,9 +151,13 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
     return result
 
 
+def _stopit_wrapped(func, s, raise_exception, *args, **kwargs):
+    return stopit_after_timeout(s, raise_exception=raise_exception)(func)(*args, **kwargs)
+
+
 def _func_prepare(func, process_timeout, need_serialize):
     if process_timeout:
-        func = partial(_wrapped_func, func, process_timeout, True)
+        func = partial(_stopit_wrapped, func, process_timeout, True)
     if need_serialize:
         if dill is None:
             raise ModuleNotFoundError('You must install the dill package to serialize functions.')
@@ -160,13 +165,27 @@ def _func_prepare(func, process_timeout, need_serialize):
     return func
 
 
+def _validate_args(error_behavior, tasks, total, bar_step, executor):
+    if error_behavior not in ['raise', 'coerce']:
+        raise ValueError(
+            'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
+    if executor not in ['threads', 'processes']:
+        raise ValueError(
+            'Invalid executor value specified. Must be one of the values: "threads", "processes"')
+    if isinstance(tasks, abc.Iterator) and not total:
+        raise ValueError('If the tasks are an iterator, the total parameter must be specified')
+    if bar_step != 1:
+        warnings.warn('The bar_step parameter is no longer used and will be removed in a future version.',
+                      FutureWarning,
+                      stacklevel=3
+                      )
+
+
 def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None,
                  context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
                  set_error_value=None, executor='processes', need_serialize=False
                  ):
-    if error_behavior not in ['raise', 'coerce']:
-        raise ValueError(
-            'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
+    _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
                           bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
@@ -177,11 +196,7 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
                   context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
                   set_error_value=None, executor='processes', need_serialize=False
                   ):
-    if error_behavior not in ['raise', 'coerce']:
-        raise ValueError(
-            'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
-    if isinstance(tasks, abc.Iterator) and not total:
-        raise ValueError('If the tasks are an iterator, the total parameter must be specified')
+    _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
                           bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
@@ -192,11 +207,7 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
                    context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
                    set_error_value=None, executor='processes', need_serialize=False
                    ):
-    if error_behavior not in ['raise', 'coerce']:
-        raise ValueError(
-            'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
-    if isinstance(tasks, abc.Iterator) and not total:
-        raise ValueError('If the tasks are an iterator, the total parameter must be specified')
+    _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size,
                           context, total, bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
