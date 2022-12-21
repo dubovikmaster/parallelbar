@@ -1,13 +1,26 @@
 
 # Parallelbar
 
-[![PyPI version fury.io](https://badge.fury.io/py/parallelbar.svg)](https://pypi.python.org/pypi/pandarallel/)
-[![PyPI license](https://img.shields.io/pypi/l/parallelbar.svg)](https://pypi.python.org/pypi/pandarallel/)
-[![PyPI download month](https://img.shields.io/pypi/dm/parallelbar.svg)](https://pypi.python.org/pypi/pandarallel/)
+[![PyPI version fury.io](https://badge.fury.io/py/parallelbar.svg)](https://pypi.python.org/pypi/parallelbar/)
+[![PyPI license](https://img.shields.io/pypi/l/parallelbar.svg)](https://pypi.python.org/pypi/parallelbar/)
+[![PyPI download month](https://img.shields.io/pypi/dm/parallelbar.svg)](https://pypi.python.org/pypi/parallelbar/)
 
-**Parallelbar** displays the progress of tasks in the process pool for methods such as **map**, **imap** and **imap_unordered**. Parallelbar is based on the [tqdm](https://github.com/tqdm/tqdm) module and the standard python [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) library. 
+## Table of contents
+* [Instalation](#Instalation)
+* [Usage](#Usage)
+* [Exception handling](#exception-handling)
+* [Changelog](#Changelog)
+   * [New in version 1.2](#new-in-version-1.2)
+   * [New in version 1.1](#new-in-version-1.1)
+   * [New in version 1.0](#new-in-version-1.0)
+   * [New in version 0.3](#new-in-version-0.3)
+* [Problems of the naive approach](#naive-approach)
+* [License](#license)
+
+**Parallelbar** displays the progress of tasks in the process pool for [**Pool**](https://docs.python.org/3/library/multiprocessing.html#module-multiprocessing.pool) class methods such as `map`, `starmap` (since 1.2 version), `imap` and `imap_unordered`. Parallelbar is based on the [tqdm](https://github.com/tqdm/tqdm) module and the standard python [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) library. 
 Also, it is possible to handle exceptions that occur within a separate process, as well as set a timeout for the execution of a task by a process.
 
+<a name="Installation"></a>
 ## Installation
 
     pip install parallelbar
@@ -15,7 +28,7 @@ Also, it is possible to handle exceptions that occur within a separate process, 
     pip install --user git+https://github.com/dubovikmaster/parallelbar.git
 
 
-
+<a name="Usage"></a>
 ## Usage
 
 
@@ -24,11 +37,11 @@ from parallelbar import progress_imap, progress_map, progress_imapu
 from parallelbar.tools import cpu_bench, fibonacci
 ```
 
-Let's create a list of 100 numbers and test **progress_map** with default parameters on a toy function **cpu_bench**:
+Let's create a list of 100 numbers and test `progress_map` with default parameters on a toy function `cpu_bench`:
 
 
 ```python
-tasks = [1_000_000 + i for i in range(100)]
+tasks = range(10000)
 ```
 ```python
 %%time
@@ -51,19 +64,6 @@ Core progress:
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/core_progress.gif)
 
-Great! We got an acceleration of 6 times! We were also able to observe the process
-What about the progress on the cores of your cpu?
-
-
-
-```python
-if __name__=='__main__':
-    tasks = [5_000_00 + i for i in range(100)]
-    progress_map(cpu_bench, tasks, n_cpu=4, chunk_size=1, core_progress=True)
-```
-
-![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/multiple_bar_4.gif)
-
 You can also easily use **progress_imap** and **progress_imapu** analogs of the *imap* and *imap_unordered* methods of the **Pool()** class
 
 
@@ -76,6 +76,7 @@ if __name__=='__main__':
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/one_bar_imap.gif)
 
+<a name="exception-handling"></a>
 ## Exception handling
 You can handle exceptions and set timeouts for the execution of tasks by the process.   
 Consider the following toy example:
@@ -126,15 +127,22 @@ print(res)
 ```
 
 Exception handling has also been added to methods **progress_imap** and **progress_imapu**.
-
+<a name="Changelog"></a>
 ## Changelog
+<a name="new-in-version-1.2"></a>
+### New in version 1.2
+
+ - Added `progress_starmap` function. An extension of the [`starmap`](https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool.starmap) method of the `Pool` class.
+ - Improved documentation.
+
+<a name="new-in-version-1.1"></a>
 ### New in version 1.1
 1. The `bar_step` keyword argument is no longer used and will be removed in a future version
 2. Added `need_serialize` boolean keyword argument to the `progress_map/imap/imapu` function (default `False`). Requires [dill](https://pypi.org/project/dill/) to be installed. If `True`
 the target function is serialized using `dill` library. Thus, as a target function, you can now use lambda functions, class methods and other callable objects that `pickle` cannot serialize
 3. Added dynamic optimization of the progress bar refresh rate. This can significantly improve the performance of the `progress_map/imap/imapu` functions ror very long iterables and small execution time of one task by the objective function.
 
-
+<a name="new-in-version-1.0"></a>
 ### New in version 1.0
 1. The "ignore" value of the `error_behavior` key parameter is no longer supported.
 2. Default value of key parameter `error_behavior` changed to "raise".
@@ -143,7 +151,7 @@ the target function is serialized using `dill` library. Thus, as a target functi
    - "threads" - use thread pool
    - "processes" - use processes pool (default)
 
-
+<a name="new-in-version-0.3"></a>
 ### New in version 0.3.0
 1. The `error_behavior` keyword argument has been added to the **progress_map**, **progress_imap** and **progress_imapu** methods. 
 Must be one of the values: "raise", "ignore", "coerce". 
@@ -240,7 +248,7 @@ time took: 8.0
 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29]
 ```
 
-
+<a name="naive-approach"></a>
 ## Problems of the naive approach
 Why can't I do something simpler? Let's take the standard **imap** method and run through it in a loop with **tqdm** and take the results from the processes:
 ```python
@@ -291,6 +299,7 @@ if __name__=='__main__':
 The progress_imap function takes care of collecting the result and closing the process pool for you.
 In fact, the naive approach described above will work for the standard imap_unordered method. But it does not guarantee the order of the returned result. This is often critically important.
 
+<a name="license"></a>
 ## License
 
 MIT license

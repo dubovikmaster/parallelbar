@@ -3,8 +3,11 @@ from collections import abc
 import multiprocessing as mp
 from threading import Thread
 from tqdm.auto import tqdm
-from .tools import get_len
-from .tools import stopit_after_timeout
+from .tools import (
+    get_len,
+    func_args_unpack,
+    stopit_after_timeout
+)
 import time
 from itertools import count
 import warnings
@@ -187,7 +190,108 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
                  context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
                  set_error_value=None, executor='processes', need_serialize=False
                  ):
+    """
+    An extension of the map method of the multiprocessing.Poll class that allows you to display the progress of tasks,
+    handle exceptions, and set a timeout for the function to execute.
+
+    Parameters:
+    ----------
+    func: сallable
+        A function that will be applied element by element to the tasks
+         iterable.
+    tasks: Iterable
+        The func function will be applied to the task elements.
+    initializer: сallable or None, default None
+    initargs: tuple
+    n_cpu: int, or None, default None
+        number of workers, if None n_cpu = multiprocessing.cpu_count().
+    chunk_size: int or None, default None
+    context: str or None, default None
+        Can be 'fork', 'spawn' or 'forkserver'.
+    total: int or None, default None
+        The number of elements in tasks. Must be specified if task is iterator.
+    bar_step: int, default 1.
+    disable: bool, default False
+        if True don't show progress bar.
+    process_timeout: float or None, default None
+        If not None, a TimeoutError exception will be raised if the function execution time exceeds
+        the specified value in seconds.
+    error_behavior: str, default 'raise'
+        Can be 'raise' or 'coerce'
+        - If 'raise', then the exception that occurs when calling the func function will be raised.
+        - If 'coerce', then the exception that occurs when calling the func function will be processed and
+        the result of the function execution will be the value set in set_error_value.
+    set_error_value: Any, default None
+        The value to be returned in case of exception handling. Only matters if error_behavior='coerce'.
+        if None, the exception traceback will be returned.
+    executor: str, default 'processes'
+        Can be 'processes' or 'threads'
+        - if 'processes', uses processes pool
+        - if 'threads', use threads pool
+    need_serialize: bool, default False
+        If True  function will be serialized with dill library.
+    Returns
+    -------
+    result: list
+
+    """
     _validate_args(error_behavior, tasks, total, bar_step, executor)
+    func = _func_prepare(func, process_timeout, need_serialize)
+    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
+                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
+    return result
+
+
+def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None,
+                     context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
+                     set_error_value=None, executor='processes', need_serialize=False
+                     ):
+    """
+    An extension of the starmap method of the multiprocessing.Poll class that allows you to display
+    the progress of tasks, handle exceptions, and set a timeout for the function to execute.
+
+    Parameters:
+    ----------
+    func: сallable
+        A function that will be applied element by element to the tasks iterable.
+    tasks: Iterable
+        The func function will be applied to the task elements.
+    initializer: сallable or None, default None
+    initargs: tuple
+    n_cpu: int, or None, default None
+        number of workers, if None n_cpu = multiprocessing.cpu_count().
+    chunk_size: int or None, default None
+    context: str or None, default None
+        Can be 'fork', 'spawn' or 'forkserver'.
+    total: int or None, default None
+        The number of elements in tasks. Must be specified if task is iterator.
+    bar_step: int, default 1.
+    disable: bool, default False
+        if True don't show progress bar.
+    process_timeout: float or None, default None
+        If not None, a TimeoutError exception will be raised if the function execution time exceeds
+        the specified value in seconds.
+    error_behavior: str, default 'raise'
+        Can be 'raise' or 'coerce'
+        - If 'raise', then the exception that occurs when calling the func function will be raised.
+        - If 'coerce', then the exception that occurs when calling the func function will be processed and
+        the result of the function execution will be the value set in set_error_value.
+    set_error_value: Any, default None
+        The value to be returned in case of exception handling. Only matters if error_behavior='coerce'.
+        if None, the exception traceback will be returned.
+    executor: str, default 'processes'
+        Can be 'processes' or 'threads'
+        - if 'processes', uses processes pool
+        - if 'threads', use threads pool
+    need_serialize: bool, default False
+        If True  function will be serialized with dill library.
+    Returns
+    -------
+    result: list
+
+    """
+    _validate_args(error_behavior, tasks, total, bar_step, executor)
+    func = partial(func_args_unpack, func)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
                           bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
@@ -198,6 +302,52 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
                   context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
                   set_error_value=None, executor='processes', need_serialize=False
                   ):
+    """
+    An extension of the imap method of the multiprocessing.Poll class that allows you to display the progress of tasks,
+    handle exceptions, and set a timeout for the function to execute.
+
+    Parameters:
+    ----------
+    func: сallable
+        A function that will be applied element by element to the tasks
+         iterable.
+    tasks: Iterable
+        The func function will be applied to the task elements.
+    initializer: сallable or None, default None
+    initargs: tuple
+    n_cpu: int, or None, default None
+        number of workers, if None n_cpu = multiprocessing.cpu_count().
+    chunk_size: int or None, default None
+    context: str or None, default None
+        Can be 'fork', 'spawn' or 'forkserver'.
+    total: int or None, default None
+        The number of elements in tasks. Must be specified if task is iterator.
+    bar_step: int, default 1.
+    disable: bool, default False
+        if True don't show progress bar.
+    process_timeout: float or None, default None
+        If not None, a TimeoutError exception will be raised if the function execution time exceeds
+        the specified value in seconds.
+    error_behavior: str, default 'raise'
+        Can be 'raise' or 'coerce'
+        - If 'raise', then the exception that occurs when calling the func function will be raised.
+        - If 'coerce', then the exception that occurs when calling the func function will be processed and
+        the result of the function execution will be the value set in set_error_value.
+    set_error_value: Any, default None
+        The value to be returned in case of exception handling. Only matters if error_behavior='coerce'.
+        if None, the exception traceback will be returned.
+    executor: str, default 'processes'
+        Can be 'processes' or 'threads'
+        - if 'processes', uses processes pool
+        - if 'threads', use threads pool
+    need_serialize: bool, default False
+        If True  function will be serialized with dill library.
+    Returns
+    -------
+    result: list
+
+    """
+
     _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
@@ -209,6 +359,52 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
                    context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
                    set_error_value=None, executor='processes', need_serialize=False
                    ):
+    """
+    An extension of the imap_unordered method of the multiprocessing.Poll class that allows you to display the progress of tasks,
+    handle exceptions, and set a timeout for the function to execute.
+
+    Parameters:
+    ----------
+    func: сallable
+        A function that will be applied element by element to the tasks
+         iterable.
+    tasks: Iterable
+        The func function will be applied to the task elements.
+    initializer: сallable or None, default None
+    initargs: tuple
+    n_cpu: int, or None, default None
+        number of workers, if None n_cpu = multiprocessing.cpu_count().
+    chunk_size: int or None, default None
+    context: str or None, default None
+        Can be 'fork', 'spawn' or 'forkserver'.
+    total: int or None, default None
+        The number of elements in tasks. Must be specified if task is iterator.
+    bar_step: int, default 1.
+    disable: bool, default False
+        if True don't show progress bar.
+    process_timeout: float or None, default None
+        If not None, a TimeoutError exception will be raised if the function execution time exceeds
+        the specified value in seconds.
+    error_behavior: str, default 'raise'
+        Can be 'raise' or 'coerce'
+        - If 'raise', then the exception that occurs when calling the func function will be raised.
+        - If 'coerce', then the exception that occurs when calling the func function will be processed and
+        the result of the function execution will be the value set in set_error_value.
+    set_error_value: Any, default None
+        The value to be returned in case of exception handling. Only matters if error_behavior='coerce'.
+        if None, the exception traceback will be returned.
+    executor: str, default 'processes'
+        Can be 'processes' or 'threads'
+        - if 'processes', uses processes pool
+        - if 'threads', use threads pool
+    need_serialize: bool, default False
+        If True  function will be serialized with dill library.
+    Returns
+    -------
+    result: list
+
+    """
+
     _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size,
