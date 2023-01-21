@@ -71,7 +71,7 @@ You can also easily use **progress_imap** and **progress_imapu** analogs of the 
 %%time
 if __name__=='__main__':
     tasks = [20 + i for i in range(15)]
-    result = progress_imap(fibonacci, tasks, chunk_size=1, core_progress=False)
+    result = progress_imap(fibonacci, tasks, chunk_size=1)
 ```
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/one_bar_imap.gif)
