@@ -10,6 +10,7 @@
 * [Usage](#Usage)
 * [Exception handling](#exception-handling)
 * [Changelog](#Changelog)
+   * [New in version 1.3](#new-in-version-1.3)
    * [New in version 1.2](#new-in-version-1.2)
    * [New in version 1.1](#new-in-version-1.1)
    * [New in version 1.0](#new-in-version-1.0)
@@ -129,6 +130,11 @@ print(res)
 Exception handling has also been added to methods **progress_imap** and **progress_imapu**.
 <a name="Changelog"></a>
 ## Changelog
+
+<a name="new-in-version-1.3"></a>
+### New in version 1.3
+- added `maxtaskperchild` keyword parameter to the `progress_map/starmap/imap/imapu` function (default=`None`)
+
 <a name="new-in-version-1.2"></a>
 ### New in version 1.2
 
