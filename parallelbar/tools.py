@@ -74,7 +74,7 @@ def stopit_after_timeout(s, raise_exception=True):
                 timer.start()
                 result = func(*args, **kwargs)
             except KeyboardInterrupt:
-                msg = f'function \"{func.__name__}\" took longer than {s} s.'
+                msg = f'function took longer than {s} s.'
                 if raise_exception:
                     raise TimeoutError(msg)
                 result = msg
