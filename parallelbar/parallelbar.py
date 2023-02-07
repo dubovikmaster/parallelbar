@@ -38,9 +38,9 @@ def _update_error_bar(bar_dict, bar_parameters):
         bar_dict['bar'].update()
 
 
-def _process_status(bar_size, disable, worker_queue):
-    bar = ProgressBar(total=bar_size, disable=disable, desc='DONE')
-    error_bar_parameters = dict(total=bar_size, disable=disable, position=1, desc='ERROR', colour='red')
+def _process_status(bar_size, worker_queue):
+    bar = ProgressBar(total=bar_size, desc='DONE')
+    error_bar_parameters = dict(total=bar_size, position=1, desc='ERROR', colour='red')
     error_bar = {}
     error_bar_n = 0
     while True:
@@ -52,7 +52,6 @@ def _process_status(bar_size, disable, worker_queue):
             if bar.n < bar_size and upd_value != -1:
                 bar.update(bar_size - bar.n - error_bar_n)
             bar.close()
-
             break
         if flag:
             _update_error_bar(error_bar, error_bar_parameters)
@@ -84,10 +83,10 @@ def func_wrapped(cnt, state, func, need_serialize, error_handling, set_error_val
         func = dill.loads(func)
     try:
         result = func(task)
-    except Exception as e:
+    except BaseException as e:
         if error_handling == 'raise':
             worker_queue.put((1, 1))
-            worker_queue.put((None, None))
+            worker_queue.put((None, -1))
             raise
         else:
             worker_queue.put((1, 1))
@@ -107,14 +106,12 @@ def func_wrapped(cnt, state, func, need_serialize, error_handling, set_error_val
             state.last_update_val = updated
             state.last_update_t = time_now
             worker_queue.put_nowait((0, delta_i))
-        elif updated == total:
-            worker_queue.put_nowait((0, updated - state.last_update_val))
 
     return result
 
 
 def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, bar_step, disable,
-                 error_behavior, set_error_value, executor, need_serialize
+                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild
                  ):
     worker_queue = mp.Manager().Queue()
     len_tasks = get_len(tasks, total)
@@ -129,13 +126,15 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
     func_new = partial(func_wrapped, cnt, state, func, need_serialize, error_behavior, set_error_value, worker_queue,
                        chunk_size)
     bar_size = len_tasks
-    thread = Thread(target=_process_status, args=(bar_size, disable, worker_queue))
-    thread.start()
+    if not disable:
+        thread = Thread(target=_process_status, args=(bar_size, worker_queue), daemon=True)
+        thread.start()
     try:
         if executor == 'threads':
             exc_pool = mp.pool.ThreadPool(n_cpu, initializer=initializer, initargs=initargs)
         else:
-            exc_pool = mp.get_context(context).Pool(n_cpu, initializer=initializer, initargs=initargs)
+            exc_pool = mp.get_context(context).Pool(maxtasksperchild=maxtasksperchild,
+                                                    processes=n_cpu, initializer=initializer, initargs=initargs)
         with exc_pool as p:
             if pool_type == 'map':
                 result = p.map(func_new, tasks, chunksize=chunk_size)
@@ -186,9 +185,9 @@ def _validate_args(error_behavior, tasks, total, bar_step, executor):
                       )
 
 
-def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None,
-                 context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
-                 set_error_value=None, executor='processes', need_serialize=False
+def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
+                 bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                 executor='processes', need_serialize=False, maxtasksperchild=None
                  ):
     """
     An extension of the map method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -238,13 +237,15 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
+                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize,
+                          maxtasksperchild
+                          )
     return result
 
 
-def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None,
-                     context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
-                     set_error_value=None, executor='processes', need_serialize=False
+def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
+                     bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                     executor='processes', need_serialize=False, maxtasksperchild=None
                      ):
     """
     An extension of the starmap method of the multiprocessing.Poll class that allows you to display
@@ -294,13 +295,15 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     func = partial(func_args_unpack, func)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
+                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize,
+                          maxtasksperchild
+                          )
     return result
 
 
-def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1,
-                  context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
-                  set_error_value=None, executor='processes', need_serialize=False
+def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
+                  bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                  executor='processes', need_serialize=False, maxtasksperchild=None
                   ):
     """
     An extension of the imap method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -351,13 +354,15 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
     _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
+                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize,
+                          maxtasksperchild
+                          )
     return result
 
 
-def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1,
-                   context=None, total=None, bar_step=1, disable=False, process_timeout=None, error_behavior='raise',
-                   set_error_value=None, executor='processes', need_serialize=False
+def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
+                   bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                   executor='processes', need_serialize=False, maxtasksperchild=None
                    ):
     """
     An extension of the imap_unordered method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -408,5 +413,7 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
     _validate_args(error_behavior, tasks, total, bar_step, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size,
-                          context, total, bar_step, disable, error_behavior, set_error_value, executor, need_serialize)
+                          context, total, bar_step, disable, error_behavior, set_error_value, executor,
+                          need_serialize, maxtasksperchild
+                          )
     return result
