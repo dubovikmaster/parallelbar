@@ -1,10 +1,7 @@
 from math import sin, cos, radians
-import threading
-import _thread as thread
-import platform
-import os
-import signal
-from functools import wraps
+import multiprocessing as mp
+
+worker_queue = mp.Manager().Queue()
 
 
 def func_args_unpack(func, args):
@@ -12,6 +9,8 @@ def func_args_unpack(func, args):
 
 
 def get_len(iterable, total):
+    if total:
+        return total
     try:
         length = iterable.__len__()
     except AttributeError:
@@ -57,31 +56,3 @@ def get_packs_count(array, pack_size):
         total += 1
     return total
 
-
-def stop_function():
-    if platform.system() == 'Windows':
-        thread.interrupt_main()
-    else:
-        os.kill(os.getpid(), signal.SIGINT)
-
-
-def stopit_after_timeout(s, raise_exception=True):
-    def actual_decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            timer = threading.Timer(s, stop_function)
-            try:
-                timer.start()
-                result = func(*args, **kwargs)
-            except KeyboardInterrupt:
-                msg = f'function took longer than {s} s.'
-                if raise_exception:
-                    raise TimeoutError(msg)
-                result = msg
-            finally:
-                timer.cancel()
-            return result
-
-        return wrapper
-
-    return actual_decorator

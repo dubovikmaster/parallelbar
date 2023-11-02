@@ -2,15 +2,18 @@ from functools import partial
 from collections import abc
 import multiprocessing as mp
 from threading import Thread
-from tqdm.auto import tqdm
-from .tools import (
-    get_len,
-    func_args_unpack,
-    stopit_after_timeout
-)
 import time
 from itertools import count
 import warnings
+
+from tqdm.auto import tqdm
+
+from .tools import (
+    worker_queue,
+    get_len,
+    func_args_unpack,
+)
+from .wrappers import stopit_after_timeout
 
 try:
     import dill
@@ -111,25 +114,24 @@ def func_wrapped(cnt, state, func, need_serialize, error_handling, set_error_val
 
 
 def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, bar_step, disable,
-                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild
+                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
                  ):
-    worker_queue = mp.Manager().Queue()
+    raised_exception = False
     len_tasks = get_len(tasks, total)
     if not n_cpu:
         n_cpu = mp.cpu_count()
-    if not chunk_size:
-        chunk_size, extra = divmod(len_tasks, n_cpu * 4)
-        if extra:
-            chunk_size += 1
-    state = ProgressStatus()
-    cnt = count(1)
-    func_new = partial(func_wrapped, cnt, state, func, need_serialize, error_behavior, set_error_value, worker_queue,
-                       chunk_size)
+    if not used_decorators:
+        state = ProgressStatus()
+        cnt = count(1)
+        func_new = partial(func_wrapped, cnt, state, func, need_serialize, error_behavior, set_error_value, worker_queue,
+                           chunk_size)
+    else:
+        func_new = partial(func)
     bar_size = len_tasks
-    if not disable:
-        thread = Thread(target=_process_status, args=(bar_size, worker_queue), daemon=True)
-        thread.start()
+    thread = Thread(target=_process_status, args=(bar_size, worker_queue), daemon=True)
     try:
+        if not disable:
+            thread.start()
         if executor == 'threads':
             exc_pool = mp.pool.ThreadPool(n_cpu, initializer=initializer, initargs=initargs)
         else:
@@ -147,11 +149,20 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                         result.append(next(iter_result))
                     except StopIteration:
                         break
-    except Exception:
-        worker_queue.put((None, -1))
-        raise
-    else:
-        worker_queue.put((None, None))
+    except Exception as e:
+        raised_exception = e
+    finally:
+        # stop thread
+        while thread.is_alive():
+            if raised_exception:
+                worker_queue.put((None, -1))
+            else:
+                worker_queue.put((None, None))
+        # clear queue
+        while worker_queue.qsize():
+            worker_queue.get()
+        if raised_exception:
+            raise raised_exception
     return result
 
 
@@ -187,7 +198,7 @@ def _validate_args(error_behavior, tasks, total, bar_step, executor):
 
 def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                  bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
-                 executor='processes', need_serialize=False, maxtasksperchild=None
+                 executor='processes', need_serialize=False, maxtasksperchild=None, used_decorators=False
                  ):
     """
     An extension of the map method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -235,10 +246,11 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
 
     """
     _validate_args(error_behavior, tasks, total, bar_step, executor)
-    func = _func_prepare(func, process_timeout, need_serialize)
+    if not used_decorators:
+        func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
                           bar_step, disable, error_behavior, set_error_value, executor, need_serialize,
-                          maxtasksperchild
+                          maxtasksperchild, used_decorators,
                           )
     return result
 
