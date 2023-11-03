@@ -4,12 +4,11 @@ import multiprocessing as mp
 from threading import Thread
 import time
 from itertools import count
-import warnings
 
 from tqdm.auto import tqdm
 
 from .tools import (
-    worker_queue,
+    WORKER_QUEUE,
     get_len,
     func_args_unpack,
 )
@@ -81,9 +80,7 @@ class ProgressStatus:
         self.last_update_val = 0
 
 
-def func_wrapped(cnt, state, func, need_serialize, error_handling, set_error_value, worker_queue, total, task):
-    if need_serialize:
-        func = dill.loads(func)
+def func_wrapped(cnt, state, func, error_handling, set_error_value, worker_queue, task):
     try:
         result = func(task)
     except BaseException as e:
@@ -113,22 +110,25 @@ def func_wrapped(cnt, state, func, need_serialize, error_handling, set_error_val
     return result
 
 
-def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, bar_step, disable,
+def _deserialize(func, task):
+    return dill.loads(func)(task)
+
+
+def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                  error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
                  ):
     raised_exception = False
     len_tasks = get_len(tasks, total)
     if not n_cpu:
         n_cpu = mp.cpu_count()
+    if need_serialize:
+        func = partial(_deserialize, func)
     if not used_decorators:
         state = ProgressStatus()
         cnt = count(1)
-        func_new = partial(func_wrapped, cnt, state, func, need_serialize, error_behavior, set_error_value, worker_queue,
-                           chunk_size)
-    else:
-        func_new = partial(func)
+        func = partial(func_wrapped, cnt, state, func, need_serialize, error_behavior, set_error_value, WORKER_QUEUE)
     bar_size = len_tasks
-    thread = Thread(target=_process_status, args=(bar_size, worker_queue), daemon=True)
+    thread = Thread(target=_process_status, args=(bar_size, WORKER_QUEUE), daemon=True)
     try:
         if not disable:
             thread.start()
@@ -139,11 +139,11 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                                                     processes=n_cpu, initializer=initializer, initargs=initargs)
         with exc_pool as p:
             if pool_type == 'map':
-                result = p.map(func_new, tasks, chunksize=chunk_size)
+                result = p.map(func, tasks, chunksize=chunk_size)
             else:
                 result = list()
                 method = getattr(p, pool_type)
-                iter_result = method(func_new, tasks, chunksize=chunk_size)
+                iter_result = method(func, tasks, chunksize=chunk_size)
                 while 1:
                     try:
                         result.append(next(iter_result))
@@ -155,12 +155,12 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
         # stop thread
         while thread.is_alive():
             if raised_exception:
-                worker_queue.put((None, -1))
+                WORKER_QUEUE.put((None, -1))
             else:
-                worker_queue.put((None, None))
+                WORKER_QUEUE.put((None, None))
         # clear queue
-        while worker_queue.qsize():
-            worker_queue.get()
+        while WORKER_QUEUE.qsize():
+            WORKER_QUEUE.get()
         if raised_exception:
             raise raised_exception
     return result
@@ -180,7 +180,7 @@ def _func_prepare(func, process_timeout, need_serialize):
     return func
 
 
-def _validate_args(error_behavior, tasks, total, bar_step, executor):
+def _validate_args(error_behavior, tasks, total, executor):
     if error_behavior not in ['raise', 'coerce']:
         raise ValueError(
             'Invalid error_handling value specified. Must be one of the values: "raise", "coerce"')
@@ -189,15 +189,10 @@ def _validate_args(error_behavior, tasks, total, bar_step, executor):
             'Invalid executor value specified. Must be one of the values: "threads", "processes"')
     if isinstance(tasks, abc.Iterator) and not total:
         raise ValueError('If the tasks are an iterator, the total parameter must be specified')
-    if bar_step != 1:
-        warnings.warn('The bar_step parameter is no longer used and will be removed in a future version.',
-                      FutureWarning,
-                      stacklevel=3
-                      )
 
 
 def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
-                 bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                 disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                  executor='processes', need_serialize=False, maxtasksperchild=None, used_decorators=False
                  ):
     """
@@ -220,7 +215,6 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
         Can be 'fork', 'spawn' or 'forkserver'.
     total: int or None, default None
         The number of elements in tasks. Must be specified if task is iterator.
-    bar_step: int, default 1.
     disable: bool, default False
         if True don't show progress bar.
     process_timeout: float or None, default None
@@ -245,18 +239,17 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     result: list
 
     """
-    _validate_args(error_behavior, tasks, total, bar_step, executor)
-    if not used_decorators:
-        func = _func_prepare(func, process_timeout, need_serialize)
-    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize,
-                          maxtasksperchild, used_decorators,
+    _validate_args(error_behavior, tasks, total, executor)
+    # if not used_decorators:
+    func = _func_prepare(func, process_timeout, need_serialize)
+    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
+                          error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
                           )
     return result
 
 
 def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
-                     bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                     disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                      executor='processes', need_serialize=False, maxtasksperchild=None
                      ):
     """
@@ -278,7 +271,6 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
         Can be 'fork', 'spawn' or 'forkserver'.
     total: int or None, default None
         The number of elements in tasks. Must be specified if task is iterator.
-    bar_step: int, default 1.
     disable: bool, default False
         if True don't show progress bar.
     process_timeout: float or None, default None
@@ -303,18 +295,17 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     result: list
 
     """
-    _validate_args(error_behavior, tasks, total, bar_step, executor)
+    _validate_args(error_behavior, tasks, total, executor)
     func = partial(func_args_unpack, func)
     func = _func_prepare(func, process_timeout, need_serialize)
-    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize,
-                          maxtasksperchild
+    result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
+                          error_behavior, set_error_value, executor, need_serialize, maxtasksperchild
                           )
     return result
 
 
 def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
-                  bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                  disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                   executor='processes', need_serialize=False, maxtasksperchild=None
                   ):
     """
@@ -337,7 +328,6 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
         Can be 'fork', 'spawn' or 'forkserver'.
     total: int or None, default None
         The number of elements in tasks. Must be specified if task is iterator.
-    bar_step: int, default 1.
     disable: bool, default False
         if True don't show progress bar.
     process_timeout: float or None, default None
@@ -363,17 +353,17 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
 
     """
 
-    _validate_args(error_behavior, tasks, total, bar_step, executor)
+    _validate_args(error_behavior, tasks, total, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          bar_step, disable, error_behavior, set_error_value, executor, need_serialize,
+                          disable, error_behavior, set_error_value, executor, need_serialize,
                           maxtasksperchild
                           )
     return result
 
 
 def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
-                   bar_step=1, disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
+                   disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                    executor='processes', need_serialize=False, maxtasksperchild=None
                    ):
     """
@@ -396,7 +386,6 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
         Can be 'fork', 'spawn' or 'forkserver'.
     total: int or None, default None
         The number of elements in tasks. Must be specified if task is iterator.
-    bar_step: int, default 1.
     disable: bool, default False
         if True don't show progress bar.
     process_timeout: float or None, default None
@@ -422,10 +411,9 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
 
     """
 
-    _validate_args(error_behavior, tasks, total, bar_step, executor)
+    _validate_args(error_behavior, tasks, total, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
-    result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size,
-                          context, total, bar_step, disable, error_behavior, set_error_value, executor,
-                          need_serialize, maxtasksperchild
+    result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
+                          disable, error_behavior, set_error_value, executor, need_serialize, maxtasksperchild
                           )
     return result

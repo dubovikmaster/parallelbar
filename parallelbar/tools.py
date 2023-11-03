@@ -1,7 +1,7 @@
 from math import sin, cos, radians
 import multiprocessing as mp
 
-worker_queue = mp.Manager().Queue()
+WORKER_QUEUE = mp.Manager().Queue()
 
 
 def func_args_unpack(func, args):

@@ -6,7 +6,7 @@ import signal
 from functools import wraps
 
 from .tools import (
-    worker_queue,
+    WORKER_QUEUE,
 )
 import time
 from itertools import count
@@ -67,11 +67,11 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     result = stopit_after_timeout(timeout)(func)(task)
             except Exception as e:
                 if error_handling == 'raise':
-                    worker_queue.put((1, 1))
-                    worker_queue.put((None, -1))
+                    WORKER_QUEUE.put((1, 1))
+                    WORKER_QUEUE.put((None, -1))
                     raise
                 else:
-                    worker_queue.put((1, 1))
+                    WORKER_QUEUE.put((1, 1))
                     _ = next(cnt)
                     if set_error_value is None:
                         return e
@@ -87,7 +87,7 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     state.next_update += max(int((delta_i / delta_t) * .25), 1)
                     state.last_update_val = updated
                     state.last_update_t = time_now
-                    worker_queue.put_nowait((0, delta_i))
+                    WORKER_QUEUE.put_nowait((0, delta_i))
             return result
 
         wrapper.add_progress = True
