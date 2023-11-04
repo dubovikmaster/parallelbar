@@ -72,7 +72,6 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     raise
                 else:
                     WORKER_QUEUE.put((1, 1))
-                    _ = next(cnt)
                     if set_error_value is None:
                         return e
                 return set_error_value
