@@ -2,8 +2,6 @@ from functools import partial
 from collections import abc
 import multiprocessing as mp
 from threading import Thread
-import time
-from itertools import count
 
 from tqdm.auto import tqdm
 
@@ -12,7 +10,10 @@ from .tools import (
     get_len,
     func_args_unpack,
 )
-from .wrappers import stopit_after_timeout
+from .wrappers import (
+    stopit_after_timeout,
+    add_progress
+)
 
 try:
     import dill
@@ -61,57 +62,17 @@ def _process_status(bar_size, worker_queue):
             bar.update(upd_value)
 
 
-def _bar_size(chunk_size, len_tasks, n_cpu):
-    bar_count, extra = divmod(len_tasks, chunk_size)
-    if bar_count < n_cpu:
-        bar_size = chunk_size
-    else:
-        bar_size, extra = divmod(len_tasks, n_cpu * chunk_size)
-        bar_size = bar_size * chunk_size
-        if extra:
-            bar_size += chunk_size
-    return bar_size
-
-
-class ProgressStatus:
-    def __init__(self):
-        self.next_update = 1
-        self.last_update_t = time.perf_counter()
-        self.last_update_val = 0
-
-
-def func_wrapped(cnt, state, func, error_handling, set_error_value, worker_queue, task):
-    try:
-        result = func(task)
-    except BaseException as e:
-        if error_handling == 'raise':
-            worker_queue.put((1, 1))
-            worker_queue.put((None, -1))
-            raise
-        else:
-            worker_queue.put((1, 1))
-            _ = next(cnt)
-            if set_error_value is None:
-                return e
-        return set_error_value
-    else:
-        updated = next(cnt)
-        if updated == state.next_update:
-            time_now = time.perf_counter()
-
-            delta_t = time_now - state.last_update_t
-            delta_i = updated - state.last_update_val
-
-            state.next_update += max(int((delta_i / delta_t) * .25), 1)
-            state.last_update_val = updated
-            state.last_update_t = time_now
-            worker_queue.put_nowait((0, delta_i))
-
-    return result
-
-
 def _deserialize(func, task):
     return dill.loads(func)(task)
+
+
+class _LocalFunctions:
+    # From https://stackoverflow.com/questions/72766345/attributeerror-cant-pickle-local-object-in-multiprocessing
+    @classmethod
+    def add_functions(cls, *args):
+        for function in args:
+            setattr(cls, function.__name__, function)
+            function.__qualname__ = cls.__qualname__ + '.' + function.__name__
 
 
 def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
@@ -119,14 +80,15 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                  ):
     raised_exception = False
     len_tasks = get_len(tasks, total)
-    if not n_cpu:
-        n_cpu = mp.cpu_count()
     if need_serialize:
         func = partial(_deserialize, func)
+    new_func = partial(func)
     if not used_decorators:
-        state = ProgressStatus()
-        cnt = count(1)
-        func = partial(func_wrapped, cnt, state, func, need_serialize, error_behavior, set_error_value, WORKER_QUEUE)
+        @add_progress(error_handling=error_behavior, set_error_value=set_error_value)
+        def new_func(task):
+            return func(task)
+
+        _LocalFunctions.add_functions(new_func)
     bar_size = len_tasks
     thread = Thread(target=_process_status, args=(bar_size, WORKER_QUEUE), daemon=True)
     try:
@@ -139,11 +101,11 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                                                     processes=n_cpu, initializer=initializer, initargs=initargs)
         with exc_pool as p:
             if pool_type == 'map':
-                result = p.map(func, tasks, chunksize=chunk_size)
+                result = p.map(new_func, tasks, chunksize=chunk_size)
             else:
                 result = list()
                 method = getattr(p, pool_type)
-                iter_result = method(func, tasks, chunksize=chunk_size)
+                iter_result = method(new_func, tasks, chunksize=chunk_size)
                 while 1:
                     try:
                         result.append(next(iter_result))
@@ -193,7 +155,7 @@ def _validate_args(error_behavior, tasks, total, executor):
 
 def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                  disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
-                 executor='processes', need_serialize=False, maxtasksperchild=None, used_decorators=False
+                 executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
                  ):
     """
     An extension of the map method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -234,23 +196,25 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
         - if 'threads', use threads pool
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
+    used_add_progress_decorator: bool, default False
     Returns
     -------
     result: list
 
     """
     _validate_args(error_behavior, tasks, total, executor)
-    # if not used_decorators:
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
-                          error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
+                          error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
+                          used_add_progress_decorator,
                           )
     return result
 
 
 def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                      disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
-                     executor='processes', need_serialize=False, maxtasksperchild=None
+                     executor='processes', need_serialize=False, maxtasksperchild=None,
+                     used_add_progress_decorator=False,
                      ):
     """
     An extension of the starmap method of the multiprocessing.Poll class that allows you to display
@@ -290,6 +254,7 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
         - if 'threads', use threads pool
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
+    used_add_progress_decorator: bool, default False
     Returns
     -------
     result: list
@@ -299,14 +264,15 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     func = partial(func_args_unpack, func)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
-                          error_behavior, set_error_value, executor, need_serialize, maxtasksperchild
+                          error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
+                          used_add_progress_decorator,
                           )
     return result
 
 
 def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
                   disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
-                  executor='processes', need_serialize=False, maxtasksperchild=None
+                  executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
                   ):
     """
     An extension of the imap method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -347,6 +313,7 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
         - if 'threads', use threads pool
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
+    used_add_progress_decorator: bool, default False
     Returns
     -------
     result: list
@@ -355,20 +322,20 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
 
     _validate_args(error_behavior, tasks, total, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
-    result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          disable, error_behavior, set_error_value, executor, need_serialize,
-                          maxtasksperchild
+    result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
+                          error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
+                          used_add_progress_decorator,
                           )
     return result
 
 
 def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
                    disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
-                   executor='processes', need_serialize=False, maxtasksperchild=None
+                   executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
                    ):
     """
-    An extension of the imap_unordered method of the multiprocessing.Poll class that allows you to display the progress of tasks,
-    handle exceptions, and set a timeout for the function to execute.
+    An extension of the imap_unordered method of the multiprocessing.Poll class that allows you to display the progress
+    of tasks, handle exceptions, and set a timeout for the function to execute.
 
     Parameters:
     ----------
@@ -405,6 +372,7 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
         - if 'threads', use threads pool
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
+    used_add_progress_decorator: bool, default False
     Returns
     -------
     result: list
@@ -414,6 +382,7 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
     _validate_args(error_behavior, tasks, total, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
-                          disable, error_behavior, set_error_value, executor, need_serialize, maxtasksperchild
+                          disable, error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
+                          used_add_progress_decorator,
                           )
     return result
