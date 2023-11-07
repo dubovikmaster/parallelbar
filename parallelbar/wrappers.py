@@ -59,23 +59,26 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
 
     def actual_decorator(func):
         @wraps(func)
-        def wrapper(task):
+        def wrapper(*args, worker_queue=None):
+            if worker_queue is None:
+                worker_queue = WORKER_QUEUE
             try:
                 if timeout is None:
-                    result = func(task)
+                    result = func(*args)
                 else:
-                    result = stopit_after_timeout(timeout)(func)(task)
+                    result = stopit_after_timeout(timeout)(func)(*args)
             except Exception as e:
                 if error_handling == 'raise':
-                    WORKER_QUEUE.put((1, 1))
-                    WORKER_QUEUE.put((None, -1))
+                    worker_queue.put((1, 1))
+                    worker_queue.put((None, -1))
                     raise
                 else:
-                    WORKER_QUEUE.put((1, 1))
+                    worker_queue.put((1, 1))
                     if set_error_value is None:
                         return e
                 return set_error_value
             else:
+                pass
                 updated = next(cnt)
                 if updated == state.next_update:
                     time_now = time.perf_counter()
@@ -86,10 +89,9 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     state.next_update += max(int((delta_i / delta_t) * .25), 1)
                     state.last_update_val = updated
                     state.last_update_t = time_now
-                    WORKER_QUEUE.put_nowait((0, delta_i))
+                    worker_queue.put_nowait((0, delta_i))
             return result
 
-        wrapper.add_progress = True
         return wrapper
 
     return actual_decorator

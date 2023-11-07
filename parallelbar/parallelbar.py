@@ -1,19 +1,21 @@
+import platform
+import time
 from functools import partial
 from collections import abc
 import multiprocessing as mp
 from threading import Thread
+from itertools import count
 
 from tqdm.auto import tqdm
 
-from .tools import (
-    WORKER_QUEUE,
-    get_len,
-    func_args_unpack,
-)
-from .wrappers import (
-    stopit_after_timeout,
-    add_progress
-)
+from .tools import (WORKER_QUEUE,
+                    get_len,
+                    func_args_unpack,
+                    )
+from .wrappers import (ProgressStatus,
+                       stopit_after_timeout,
+                       add_progress
+                       )
 
 try:
     import dill
@@ -46,6 +48,7 @@ def _process_status(bar_size, worker_queue):
     error_bar_parameters = dict(total=bar_size, position=1, desc='ERROR', colour='red')
     error_bar = {}
     error_bar_n = 0
+    cnt = 0
     while True:
         flag, upd_value = worker_queue.get()
         if flag is None:
@@ -55,11 +58,13 @@ def _process_status(bar_size, worker_queue):
             if bar.n < bar_size and upd_value != -1:
                 bar.update(bar_size - bar.n - error_bar_n)
             bar.close()
+            print(cnt)
             break
         if flag:
             _update_error_bar(error_bar, error_bar_parameters)
         else:
             bar.update(upd_value)
+            cnt += 1
 
 
 def _deserialize(func, task):
@@ -75,22 +80,58 @@ class _LocalFunctions:
             function.__qualname__ = cls.__qualname__ + '.' + function.__name__
 
 
+def func_wrapped(func, error_handling, set_error_value, worker_queue, task, cnt=count(1), state=ProgressStatus()):
+    try:
+        result = func(task)
+    except BaseException as e:
+        if error_handling == 'raise':
+            worker_queue.put((1, 1))
+            worker_queue.put((None, -1))
+            raise
+        else:
+            worker_queue.put((1, 1))
+            if set_error_value is None:
+                return e
+        return set_error_value
+    else:
+        updated = next(cnt)
+        if updated == state.next_update:
+            time_now = time.perf_counter()
+
+            delta_t = time_now - state.last_update_t
+            delta_i = updated - state.last_update_val
+
+            state.next_update += max(int((delta_i / delta_t) * .25), 1)
+            state.last_update_val = updated
+            state.last_update_t = time_now
+            worker_queue.put_nowait((0, delta_i))
+
+    return result
+
+
 def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
-                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
+                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators
                  ):
     raised_exception = False
+    queue = mp.Manager().Queue() if WORKER_QUEUE is None else WORKER_QUEUE
     len_tasks = get_len(tasks, total)
     if need_serialize:
         func = partial(_deserialize, func)
     new_func = partial(func)
     if not used_decorators:
-        @add_progress(error_handling=error_behavior, set_error_value=set_error_value)
-        def new_func(task):
-            return func(task)
+        if platform.system() not in ['Darwin', 'Windows']:
+            @add_progress(error_handling=error_behavior, set_error_value=set_error_value)
+            def new_func(task):
+                return func(task)
 
-        _LocalFunctions.add_functions(new_func)
+            _LocalFunctions.add_functions(new_func)
+        else:
+            new_func = partial(func_wrapped, func, error_behavior, set_error_value, queue)
+    else:
+        if platform.system() in ['Darwin', 'Windows']:
+            new_func = partial(new_func, worker_queue=queue)
     bar_size = len_tasks
-    thread = Thread(target=_process_status, args=(bar_size, WORKER_QUEUE), daemon=True)
+    thread = Thread(target=_process_status, args=(bar_size, queue), daemon=True)
     try:
         if not disable:
             thread.start()
@@ -115,14 +156,16 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
         raised_exception = e
     finally:
         # stop thread
+        print(queue.qsize())
         while thread.is_alive():
             if raised_exception:
-                WORKER_QUEUE.put((None, -1))
+                queue.put((None, -1))
             else:
-                WORKER_QUEUE.put((None, None))
+                queue.put((None, None))
         # clear queue
-        while WORKER_QUEUE.qsize():
-            WORKER_QUEUE.get()
+
+        while queue.qsize():
+            queue.get()
         if raised_exception:
             raise raised_exception
     return result
@@ -214,7 +257,7 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
 def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                      disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                      executor='processes', need_serialize=False, maxtasksperchild=None,
-                     used_add_progress_decorator=False,
+                     used_add_progress_decorator=False
                      ):
     """
     An extension of the starmap method of the multiprocessing.Poll class that allows you to display

@@ -1,10 +1,17 @@
 from math import sin, cos, radians
 import multiprocessing as mp
+import platform
 
-WORKER_QUEUE = mp.Manager().Queue()
+
+if platform.system() == 'Windows':
+    WORKER_QUEUE = None
+else:
+    WORKER_QUEUE = mp.Manager().Queue()
 
 
-def func_args_unpack(func, args):
+def func_args_unpack(func, args, worker_queue=None):
+    if worker_queue is not None:
+        return func(*args, worker_queue=worker_queue)
     return func(*args)
 
 
