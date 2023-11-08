@@ -4,12 +4,10 @@ import platform
 import os
 import signal
 from functools import wraps
-
-from .tools import (
-    WORKER_QUEUE,
-)
 import time
 from itertools import count
+
+from ._worker_queue import _WORKER_QUEUE
 
 try:
     import dill
@@ -61,7 +59,7 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
         @wraps(func)
         def wrapper(*args, worker_queue=None):
             if worker_queue is None:
-                worker_queue = WORKER_QUEUE
+                worker_queue = _WORKER_QUEUE
             try:
                 if timeout is None:
                     result = func(*args)
@@ -78,12 +76,10 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                         return e
                 return set_error_value
             else:
-                pass
                 updated = next(cnt)
-                if updated == state.next_update:
-                    time_now = time.perf_counter()
-
-                    delta_t = time_now - state.last_update_t
+                time_now = time.perf_counter()
+                delta_t = time_now - state.last_update_t
+                if updated == state.next_update or delta_t > .25:
                     delta_i = updated - state.last_update_val
 
                     state.next_update += max(int((delta_i / delta_t) * .25), 1)

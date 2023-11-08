@@ -1,12 +1,4 @@
 from math import sin, cos, radians
-import multiprocessing as mp
-import platform
-
-
-if platform.system() == 'Windows':
-    WORKER_QUEUE = None
-else:
-    WORKER_QUEUE = mp.Manager().Queue()
 
 
 def func_args_unpack(func, args, worker_queue=None):

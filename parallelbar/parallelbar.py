@@ -8,14 +8,16 @@ from itertools import count
 
 from tqdm.auto import tqdm
 
-from .tools import (WORKER_QUEUE,
-                    get_len,
-                    func_args_unpack,
-                    )
-from .wrappers import (ProgressStatus,
-                       stopit_after_timeout,
-                       add_progress
-                       )
+from .tools import (
+    get_len,
+    func_args_unpack,
+)
+from .wrappers import (
+    ProgressStatus,
+    stopit_after_timeout,
+    add_progress
+)
+from ._worker_queue import _WORKER_QUEUE
 
 try:
     import dill
@@ -48,7 +50,6 @@ def _process_status(bar_size, worker_queue):
     error_bar_parameters = dict(total=bar_size, position=1, desc='ERROR', colour='red')
     error_bar = {}
     error_bar_n = 0
-    cnt = 0
     while True:
         flag, upd_value = worker_queue.get()
         if flag is None:
@@ -58,13 +59,11 @@ def _process_status(bar_size, worker_queue):
             if bar.n < bar_size and upd_value != -1:
                 bar.update(bar_size - bar.n - error_bar_n)
             bar.close()
-            print(cnt)
             break
         if flag:
             _update_error_bar(error_bar, error_bar_parameters)
         else:
             bar.update(upd_value)
-            cnt += 1
 
 
 def _deserialize(func, task):
@@ -80,7 +79,7 @@ class _LocalFunctions:
             function.__qualname__ = cls.__qualname__ + '.' + function.__name__
 
 
-def func_wrapped(func, error_handling, set_error_value, worker_queue, task, cnt=count(1), state=ProgressStatus()):
+def _func_wrapped(func, error_handling, set_error_value, worker_queue, task, cnt=count(1), state=ProgressStatus()):
     try:
         result = func(task)
     except BaseException as e:
@@ -95,10 +94,9 @@ def func_wrapped(func, error_handling, set_error_value, worker_queue, task, cnt=
         return set_error_value
     else:
         updated = next(cnt)
-        if updated == state.next_update:
-            time_now = time.perf_counter()
-
-            delta_t = time_now - state.last_update_t
+        time_now = time.perf_counter()
+        delta_t = time_now - state.last_update_t
+        if updated == state.next_update or delta_t > .25:
             delta_i = updated - state.last_update_val
 
             state.next_update += max(int((delta_i / delta_t) * .25), 1)
@@ -113,7 +111,7 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                  error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators
                  ):
     raised_exception = False
-    queue = mp.Manager().Queue() if WORKER_QUEUE is None else WORKER_QUEUE
+    queue = mp.Manager().Queue() if _WORKER_QUEUE is None else _WORKER_QUEUE
     len_tasks = get_len(tasks, total)
     if need_serialize:
         func = partial(_deserialize, func)
@@ -126,7 +124,7 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
 
             _LocalFunctions.add_functions(new_func)
         else:
-            new_func = partial(func_wrapped, func, error_behavior, set_error_value, queue)
+            new_func = partial(_func_wrapped, func, error_behavior, set_error_value, queue)
     else:
         if platform.system() in ['Darwin', 'Windows']:
             new_func = partial(new_func, worker_queue=queue)
@@ -156,14 +154,12 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
         raised_exception = e
     finally:
         # stop thread
-        print(queue.qsize())
         while thread.is_alive():
             if raised_exception:
                 queue.put((None, -1))
             else:
                 queue.put((None, None))
         # clear queue
-
         while queue.qsize():
             queue.get()
         if raised_exception:
