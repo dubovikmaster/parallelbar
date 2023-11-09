@@ -14,6 +14,8 @@ try:
 except ImportError:
     dill = None
 
+__all__ = ['stopit_after_timeout', 'add_progress']
+
 
 def stop_function():
     if platform.system() == 'Windows':
@@ -51,27 +53,34 @@ class ProgressStatus:
         self.last_update_val = 0
 
 
+def _make_args(*args, **kwargs):
+    if kwargs:
+        return args + (kwargs,)
+    if len(args) == 1:
+        return args[0]
+    return args
+
+
 def add_progress(error_handling='raise', set_error_value=None, timeout=None):
     state = ProgressStatus()
     cnt = count(1)
 
     def actual_decorator(func):
         @wraps(func)
-        def wrapper(*args, worker_queue=None):
+        def wrapper(*args, worker_queue=None, **kwargs):
             if worker_queue is None:
                 worker_queue = _WORKER_QUEUE
             try:
                 if timeout is None:
-                    result = func(*args)
+                    result = func(*args, **kwargs)
                 else:
-                    result = stopit_after_timeout(timeout)(func)(*args)
+                    result = stopit_after_timeout(timeout)(func)(*args, **kwargs)
             except Exception as e:
                 if error_handling == 'raise':
-                    worker_queue.put((1, 1))
                     worker_queue.put((None, -1))
                     raise
                 else:
-                    worker_queue.put((1, 1))
+                    worker_queue.put((1, _make_args(*args, **kwargs)))
                     if set_error_value is None:
                         return e
                 return set_error_value

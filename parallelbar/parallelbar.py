@@ -24,6 +24,7 @@ try:
 except ImportError:
     dill = None
 
+__all__ = ['progress_map', 'progress_imap', 'progress_imapu', 'progress_starmap']
 
 class ProgressBar(tqdm):
 
@@ -45,7 +46,7 @@ def _update_error_bar(bar_dict, bar_parameters):
         bar_dict['bar'].update()
 
 
-def _process_status(bar_size, worker_queue):
+def _process_status(bar_size, worker_queue, error_queue=None, return_failed_tasks=False):
     bar = ProgressBar(total=bar_size, desc='DONE')
     error_bar_parameters = dict(total=bar_size, position=1, desc='ERROR', colour='red')
     error_bar = {}
@@ -62,6 +63,8 @@ def _process_status(bar_size, worker_queue):
             break
         if flag:
             _update_error_bar(error_bar, error_bar_parameters)
+            if return_failed_tasks:
+                error_queue.put(upd_value)
         else:
             bar.update(upd_value)
 
@@ -84,11 +87,10 @@ def _func_wrapped(func, error_handling, set_error_value, worker_queue, task, cnt
         result = func(task)
     except BaseException as e:
         if error_handling == 'raise':
-            worker_queue.put((1, 1))
             worker_queue.put((None, -1))
             raise
         else:
-            worker_queue.put((1, 1))
+            worker_queue.put((1, task))
             if set_error_value is None:
                 return e
         return set_error_value
@@ -108,10 +110,12 @@ def _func_wrapped(func, error_handling, set_error_value, worker_queue, task, cnt
 
 
 def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
-                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators
+                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
+                 return_failed_tasks,
                  ):
     raised_exception = False
     queue = mp.Manager().Queue() if _WORKER_QUEUE is None else _WORKER_QUEUE
+    error_queue = mp.Manager().Queue() if return_failed_tasks else None
     len_tasks = get_len(tasks, total)
     if need_serialize:
         func = partial(_deserialize, func)
@@ -129,7 +133,11 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
         if platform.system() in ['Darwin', 'Windows']:
             new_func = partial(new_func, worker_queue=queue)
     bar_size = len_tasks
-    thread = Thread(target=_process_status, args=(bar_size, queue), daemon=True)
+    thread = Thread(target=_process_status,
+                    args=(bar_size, queue),
+                    kwargs={"error_queue": error_queue, 'return_failed_tasks': return_failed_tasks},
+                    daemon=True,
+                    )
     try:
         if not disable:
             thread.start()
@@ -164,6 +172,12 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
             queue.get()
         if raised_exception:
             raise raised_exception
+        # get error_queue if exists
+        if return_failed_tasks:
+            error_tasks = list()
+            while error_queue.qsize():
+                error_tasks.append(error_queue.get())
+            return result, error_tasks
     return result
 
 
@@ -195,6 +209,7 @@ def _validate_args(error_behavior, tasks, total, executor):
 def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                  disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                  executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
+                 return_failed_tasks=False,
                  ):
     """
     An extension of the map method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -236,6 +251,9 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
     used_add_progress_decorator: bool, default False
+    return_failed_tasks: bool, default False
+        If True, the function will return a tuple of two lists: the first list will contain the results of the
+        function execution,  the second list will contain the tasks that caused the exception.
     Returns
     -------
     result: list
@@ -245,7 +263,7 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
-                          used_add_progress_decorator,
+                          used_add_progress_decorator, return_failed_tasks
                           )
     return result
 
@@ -253,7 +271,7 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
 def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                      disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                      executor='processes', need_serialize=False, maxtasksperchild=None,
-                     used_add_progress_decorator=False
+                     used_add_progress_decorator=False, return_failed_tasks=False,
                      ):
     """
     An extension of the starmap method of the multiprocessing.Poll class that allows you to display
@@ -294,6 +312,9 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
     used_add_progress_decorator: bool, default False
+    return_failed_tasks: bool, default False
+        If True, the function will return a tuple of two lists: the first list will contain the results of the
+        function execution,  the second list will contain the tasks that caused the exception.
     Returns
     -------
     result: list
@@ -304,7 +325,7 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
-                          used_add_progress_decorator,
+                          used_add_progress_decorator, return_failed_tasks
                           )
     return result
 
@@ -312,6 +333,7 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
 def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
                   disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                   executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
+                  return_failed_tasks=False,
                   ):
     """
     An extension of the imap method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -353,6 +375,9 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
     used_add_progress_decorator: bool, default False
+    return_failed_tasks: bool, default False
+        If True, the function will return a tuple of two lists: the first list will contain the results of the
+        function execution,  the second list will contain the tasks that caused the exception.
     Returns
     -------
     result: list
@@ -363,7 +388,7 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
-                          used_add_progress_decorator,
+                          used_add_progress_decorator, return_failed_tasks
                           )
     return result
 
@@ -371,6 +396,7 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
 def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
                    disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                    executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
+                   return_failed_tasks=False,
                    ):
     """
     An extension of the imap_unordered method of the multiprocessing.Poll class that allows you to display the progress
@@ -412,6 +438,9 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
     need_serialize: bool, default False
         If True  function will be serialized with dill library.
     used_add_progress_decorator: bool, default False
+    return_failed_tasks: bool, default False
+        If True, the function will return a tuple of two lists: the first list will contain the results of the
+        function execution,  the second list will contain the tasks that caused the exception.
     Returns
     -------
     result: list
@@ -422,6 +451,6 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'imap_unordered', tasks, initializer, initargs, n_cpu, chunk_size, context, total,
                           disable, error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
-                          used_add_progress_decorator,
+                          used_add_progress_decorator, return_failed_tasks
                           )
     return result
