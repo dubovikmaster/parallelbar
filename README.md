@@ -167,7 +167,7 @@ if __name__=='__main__':
 ```
 Out:
 
-![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/test-new.gif)
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/add_progress_example.gif)
 
 For **Windows** systems you need to add the `worker_queue` parameter to the functions `foo` and `bar` and use the `used_add_progress_decorator` parameter in the `progress_map` function:
 ```python
@@ -189,7 +189,7 @@ if __name__=='__main__':
 ```
 Out:
 
-![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/test-new.gif)
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/add_progress_example.gif)
 
 You can also use the `stopit_after_timeout` decorator separately:
 ```python
