@@ -26,6 +26,7 @@ except ImportError:
 
 __all__ = ['progress_map', 'progress_imap', 'progress_imapu', 'progress_starmap']
 
+
 class ProgressBar(tqdm):
 
     def __init__(self, *args, **kwargs):

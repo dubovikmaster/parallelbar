@@ -10,6 +10,7 @@
 * [Usage](#Usage)
 * [Exception handling](#exception-handling)
 * [Changelog](#Changelog)
+   * [New in version 2.3](#new-in-version-2.3)
    * [New in version 1.3](#new-in-version-1.3)
    * [New in version 1.2](#new-in-version-1.2)
    * [New in version 1.1](#new-in-version-1.1)
@@ -23,10 +24,13 @@ Also, it is possible to handle exceptions that occur within a separate process, 
 
 <a name="Installation"></a>
 ## Installation
-
-    pip install parallelbar
-    or
-    pip install --user git+https://github.com/dubovikmaster/parallelbar.git
+```python
+pip install parallelbar
+```
+or
+```python
+pip install --user git+https://github.com/dubovikmaster/parallelbar.git
+```
 
 
 <a name="Usage"></a>
@@ -130,6 +134,102 @@ print(res)
 Exception handling has also been added to methods **progress_imap** and **progress_imapu**.
 <a name="Changelog"></a>
 ## Changelog
+
+<a name="new-in-version-2.3"></a>
+### New in version 2.3
+- added `wrappers` module with which contains decorators:
+  - `stop_it_after_timeout` - stops the function execution after the specified time (in seconds)
+  - `add_progress` - adds a progress bar to the function execution, exception handling and timeout.
+
+Usage example for UNIX systems:
+```python
+from parallelbar.wrappers import add_progress
+from parallelbar import progress_map
+import time
+
+
+@add_progress(error_handling='coerce', timeout=.5)
+def foo(n):
+    if n==5 or n==17:
+        1/0
+    elif n==10:
+        time.sleep(1)
+    else:
+        time.sleep(.1)
+    return n
+
+def bar(x):
+    return [foo(i) for i in range(x)]
+
+if __name__=='__main__':
+    # you must specify the total number of tasks
+    res = progress_map(bar, [10, 20, 30, 40], n_cpu=4, total=100)
+```
+Out:
+
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/test-new.gif)
+
+For **Windows** systems you need to add the `worker_queue` parameter to the functions `foo` and `bar` and use the `used_add_progress_decorator` parameter in the `progress_map` function:
+```python
+@add_progress(error_handling='coerce', timeout=.5)
+def foo(n):
+    if n==5 or n==17:
+        1/0
+    elif n==10:
+        time.sleep(1)
+    else:
+        time.sleep(.1)
+    return n
+
+def bar(x, worker_queue=None):
+    return [foo(i, worker_queue=worker_queue) for i in range(x)]
+
+if __name__=='__main__':
+    res = progress_map(bar, [10, 20, 30, 40], n_cpu=4, total=100, used_add_progress_decorator=True)
+```
+Out:
+
+![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/test-new.gif)
+
+You can also use the `stopit_after_timeout` decorator separately:
+```python
+from parallelbar.wrappers import stopit_after_timeout
+from parallelbar import progress_map
+import time
+
+
+@stopit_after_timeout(.5, raise_exception=True)
+def foo(n):
+    if n==5:
+        time.sleep(1)
+    else:
+        time.sleep(.1)
+    return n
+
+if __name__=='__main__':
+    print(f'first result is: {foo(3)}')
+    print(f'second result is: {foo(5)}')
+```
+Out:
+```python
+first result is: 3
+
+TimeoutError                              Traceback (most recent call last)
+Cell In[7], line 16
+     14 if __name__=='__main__':
+     15     print(foo(3))
+---> 16     print(foo(5))
+
+File /opt/conda/envs/user_response/lib/python3.10/site-packages/parallelbar/wrappers.py:38, in stopit_after_timeout.<locals>.actual_decorator.<locals>.wrapper(*args, **kwargs)
+     36     msg = f'function took longer than {s} s.'
+     37     if raise_exception:
+---> 38         raise TimeoutError(msg)
+     39     result = msg
+     40 finally:
+
+TimeoutError: function took longer than 0.5 s.
+```
+- added `return_failed_tasks` keyword parameter to the `progress_map/starmap/imap/imapu` function (default=`False`) - if `True` then the result will include the tasks that failed with an exception.
 
 <a name="new-in-version-1.3"></a>
 ### New in version 1.3
