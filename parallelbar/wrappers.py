@@ -7,8 +7,6 @@ from functools import wraps
 import time
 from itertools import count
 
-from ._worker_queue import _WORKER_QUEUE
-
 try:
     import dill
 except ImportError:
@@ -61,15 +59,20 @@ def _make_args(*args, **kwargs):
     return args
 
 
+def init_worker(worker_queue, init_progress, init_progress_args):
+    global _WORKER_QUEUE
+    _WORKER_QUEUE = worker_queue
+    if init_progress is not None:
+        init_progress(*init_progress_args)
+
+
 def add_progress(error_handling='raise', set_error_value=None, timeout=None):
     state = ProgressStatus()
     cnt = count(1)
 
     def actual_decorator(func):
         @wraps(func)
-        def wrapper(*args, worker_queue=None, **kwargs):
-            if worker_queue is None:
-                worker_queue = _WORKER_QUEUE
+        def wrapper(*args, **kwargs):
             try:
                 if timeout is None:
                     result = func(*args, **kwargs)
@@ -77,10 +80,10 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     result = stopit_after_timeout(timeout)(func)(*args, **kwargs)
             except Exception as e:
                 if error_handling == 'raise':
-                    worker_queue.put((None, -1))
+                    _WORKER_QUEUE.put((None, -1))
                     raise
                 else:
-                    worker_queue.put((1, _make_args(*args, **kwargs)))
+                    _WORKER_QUEUE.put((1, _make_args(*args, **kwargs)))
                     if set_error_value is None:
                         return e
                 return set_error_value
@@ -94,7 +97,7 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     state.next_update += max(int((delta_i / delta_t) * .25), 1)
                     state.last_update_val = updated
                     state.last_update_t = time_now
-                    worker_queue.put_nowait((0, delta_i))
+                    _WORKER_QUEUE.put_nowait((0, delta_i))
             return result
 
         return wrapper

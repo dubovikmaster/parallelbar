@@ -10,6 +10,7 @@
 * [Usage](#Usage)
 * [Exception handling](#exception-handling)
 * [Changelog](#Changelog)
+   * [New in version 2.4](#new-in-version-2.4)
    * [New in version 2.3](#new-in-version-2.3)
    * [New in version 1.3](#new-in-version-1.3)
    * [New in version 1.2](#new-in-version-1.2)
@@ -134,6 +135,12 @@ print(res)
 Exception handling has also been added to methods **progress_imap** and **progress_imapu**.
 <a name="Changelog"></a>
 ## Changelog
+
+<a name="new-in-version-2.4"></a>
+### Version 2.4
+- fixed [issue](https://github.com/dubovikmaster/parallelbar/issues/4)
+- For **Windows OS**, when using the `add_progress` decorator, the function being decorated no longer needs the `worker_queue` keyword argument.
+
 
 <a name="new-in-version-2.3"></a>
 ### New in version 2.3

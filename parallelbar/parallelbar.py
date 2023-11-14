@@ -1,4 +1,3 @@
-import platform
 import time
 from functools import partial
 from collections import abc
@@ -15,9 +14,8 @@ from .tools import (
 from .wrappers import (
     ProgressStatus,
     stopit_after_timeout,
-    add_progress
+    init_worker,
 )
-from ._worker_queue import _WORKER_QUEUE
 
 try:
     import dill
@@ -74,38 +72,33 @@ def _deserialize(func, task):
     return dill.loads(func)(task)
 
 
-class _LocalFunctions:
-    # From https://stackoverflow.com/questions/72766345/attributeerror-cant-pickle-local-object-in-multiprocessing
-    @classmethod
-    def add_functions(cls, *args):
-        for function in args:
-            setattr(cls, function.__name__, function)
-            function.__qualname__ = cls.__qualname__ + '.' + function.__name__
-
-
-def _func_wrapped(func, error_handling, set_error_value, worker_queue, task, cnt=count(1), state=ProgressStatus()):
+def _func_wrapped(func, error_handling, set_error_value, worker_queue, disable, task, cnt=count(1),
+                  state=ProgressStatus()):
     try:
         result = func(task)
-    except BaseException as e:
+    except Exception as e:
         if error_handling == 'raise':
-            worker_queue.put((None, -1))
+            if not disable:
+                worker_queue.put((None, -1))
             raise
         else:
-            worker_queue.put((1, task))
+            if not disable:
+                worker_queue.put((1, task))
             if set_error_value is None:
                 return e
         return set_error_value
     else:
-        updated = next(cnt)
-        time_now = time.perf_counter()
-        delta_t = time_now - state.last_update_t
-        if updated == state.next_update or delta_t > .25:
-            delta_i = updated - state.last_update_val
+        if not disable:
+            updated = next(cnt)
+            time_now = time.perf_counter()
+            delta_t = time_now - state.last_update_t
+            if updated == state.next_update or delta_t > .25:
+                delta_i = updated - state.last_update_val
 
-            state.next_update += max(int((delta_i / delta_t) * .25), 1)
-            state.last_update_val = updated
-            state.last_update_t = time_now
-            worker_queue.put_nowait((0, delta_i))
+                state.next_update += max(int((delta_i / delta_t) * .25), 1)
+                state.last_update_val = updated
+                state.last_update_t = time_now
+                worker_queue.put_nowait((0, delta_i))
 
     return result
 
@@ -115,24 +108,13 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                  return_failed_tasks,
                  ):
     raised_exception = False
-    queue = mp.Manager().Queue() if _WORKER_QUEUE is None else _WORKER_QUEUE
+    queue = mp.Manager().Queue()
     error_queue = mp.Manager().Queue() if return_failed_tasks else None
     len_tasks = get_len(tasks, total)
     if need_serialize:
         func = partial(_deserialize, func)
-    new_func = partial(func)
     if not used_decorators:
-        if platform.system() not in ['Darwin', 'Windows']:
-            @add_progress(error_handling=error_behavior, set_error_value=set_error_value)
-            def new_func(task):
-                return func(task)
-
-            _LocalFunctions.add_functions(new_func)
-        else:
-            new_func = partial(_func_wrapped, func, error_behavior, set_error_value, queue)
-    else:
-        if platform.system() in ['Darwin', 'Windows']:
-            new_func = partial(new_func, worker_queue=queue)
+        func = partial(_func_wrapped, func, error_behavior, set_error_value, queue, disable)
     bar_size = len_tasks
     thread = Thread(target=_process_status,
                     args=(bar_size, queue),
@@ -143,17 +125,19 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
         if not disable:
             thread.start()
         if executor == 'threads':
-            exc_pool = mp.pool.ThreadPool(n_cpu, initializer=initializer, initargs=initargs)
+            exc_pool = mp.pool.ThreadPool(n_cpu, initializer=init_worker,
+                                          initargs=(queue, initializer, initargs))
         else:
             exc_pool = mp.get_context(context).Pool(maxtasksperchild=maxtasksperchild,
-                                                    processes=n_cpu, initializer=initializer, initargs=initargs)
+                                                    processes=n_cpu, initializer=init_worker,
+                                                    initargs=(queue, initializer, initargs))
         with exc_pool as p:
             if pool_type == 'map':
-                result = p.map(new_func, tasks, chunksize=chunk_size)
+                result = p.map(func, tasks, chunksize=chunk_size)
             else:
                 result = list()
                 method = getattr(p, pool_type)
-                iter_result = method(new_func, tasks, chunksize=chunk_size)
+                iter_result = method(func, tasks, chunksize=chunk_size)
                 while 1:
                     try:
                         result.append(next(iter_result))
@@ -169,8 +153,6 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
             else:
                 queue.put((None, None))
         # clear queue
-        while queue.qsize():
-            queue.get()
         if raised_exception:
             raise raised_exception
         # get error_queue if exists
