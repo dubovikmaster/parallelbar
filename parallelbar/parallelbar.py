@@ -105,7 +105,7 @@ def _func_wrapped(func, error_handling, set_error_value, worker_queue, disable, 
 
 def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                  error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
-                 return_failed_tasks,
+                 return_failed_tasks, timeout=None
                  ):
     raised_exception = False
     queue = mp.Manager().Queue()
@@ -133,7 +133,7 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                                                     initargs=(queue, initializer, initargs))
         with exc_pool as p:
             if pool_type == 'map':
-                result = p.map(func, tasks, chunksize=chunk_size)
+                result = p.map_async(func, tasks, chunksize=chunk_size).get(timeout=timeout)
             else:
                 result = list()
                 method = getattr(p, pool_type)
@@ -192,7 +192,7 @@ def _validate_args(error_behavior, tasks, total, executor):
 def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                  disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                  executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
-                 return_failed_tasks=False,
+                 return_failed_tasks=False, timeout=None,
                  ):
     """
     An extension of the map method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -237,6 +237,9 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     return_failed_tasks: bool, default False
         If True, the function will return a tuple of two lists: the first list will contain the results of the
         function execution,  the second list will contain the tasks that caused the exception.
+    timeout: float, optional
+        If timeout is not None and the result does not arrive within timeout seconds then multiprocessing.TimeoutError
+        is raised
     Returns
     -------
     result: list
@@ -246,7 +249,7 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
-                          used_add_progress_decorator, return_failed_tasks
+                          used_add_progress_decorator, return_failed_tasks, timeout=timeout,
                           )
     return result
 
@@ -254,7 +257,7 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
 def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                      disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                      executor='processes', need_serialize=False, maxtasksperchild=None,
-                     used_add_progress_decorator=False, return_failed_tasks=False,
+                     used_add_progress_decorator=False, return_failed_tasks=False, timeout=None,
                      ):
     """
     An extension of the starmap method of the multiprocessing.Poll class that allows you to display
@@ -298,6 +301,9 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     return_failed_tasks: bool, default False
         If True, the function will return a tuple of two lists: the first list will contain the results of the
         function execution,  the second list will contain the tasks that caused the exception.
+    timeout: float, optional
+        If timeout is not None and the result does not arrive within timeout seconds then multiprocessing.TimeoutError
+        is raised
     Returns
     -------
     result: list
@@ -308,7 +314,7 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     func = _func_prepare(func, process_timeout, need_serialize)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
-                          used_add_progress_decorator, return_failed_tasks
+                          used_add_progress_decorator, return_failed_tasks, timeout=timeout,
                           )
     return result
 

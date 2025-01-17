@@ -10,6 +10,7 @@
 * [Usage](#Usage)
 * [Exception handling](#exception-handling)
 * [Changelog](#Changelog)
+   * [New in version 2.5](#new-in-version-2.5)
    * [New in version 2.4](#new-in-version-2.4)
    * [New in version 2.3](#new-in-version-2.3)
    * [New in version 1.3](#new-in-version-1.3)
@@ -135,6 +136,10 @@ print(res)
 Exception handling has also been added to methods **progress_imap** and **progress_imapu**.
 <a name="Changelog"></a>
 ## Changelog
+
+<a name="new-in-version-2.5"></a>
+### Version 2.5
+- Introduced an optional `timeout` parameter to `progress_map` and `progress_starmap` for managing execution time limits.
 
 <a name="new-in-version-2.4"></a>
 ### Version 2.4
