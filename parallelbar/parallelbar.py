@@ -1,9 +1,11 @@
 import time
+import traceback
 from functools import partial
 from collections import abc
 import multiprocessing as mp
 from threading import Thread
 from itertools import count
+from queue import Empty
 
 from tqdm.auto import tqdm
 
@@ -22,7 +24,7 @@ try:
 except ImportError:
     dill = None
 
-__all__ = ['progress_map', 'progress_imap', 'progress_imapu', 'progress_starmap']
+__all__ = ['progress_map', 'progress_imap', 'progress_imapu', 'progress_starmap', 'Parallel']
 
 
 class ProgressBar(tqdm):
@@ -45,17 +47,25 @@ def _update_error_bar(bar_dict, bar_parameters):
         bar_dict['bar'].update()
 
 
-def _process_status(bar_size, worker_queue, error_queue=None, return_failed_tasks=False):
-    bar = ProgressBar(total=bar_size, desc='DONE')
+def _process_status(bar_size, worker_queue, error_queue=None, return_failed_tasks=False, desc='DONE'):
+    bar = ProgressBar(total=bar_size, desc=desc)
     error_bar_parameters = dict(total=bar_size, position=1, desc='ERROR', colour='red')
     error_bar = {}
     error_bar_n = 0
+    sub_bars = {}
+    next_position = 2
     while True:
-        flag, upd_value = worker_queue.get()
+        item = worker_queue.get()
+        flag, upd_value = item[0], item[1]
+        meta = item[2] if len(item) > 2 else None
         if flag is None:
             if error_bar:
                 error_bar_n = error_bar['bar'].n
                 error_bar['bar'].close()
+            for sub_bar in sub_bars.values():
+                if upd_value != -1 and sub_bar.total and sub_bar.n < sub_bar.total:
+                    sub_bar.update(sub_bar.total - sub_bar.n)
+                sub_bar.close()
             if bar.n < bar_size and upd_value != -1:
                 bar.update(bar_size - bar.n - error_bar_n)
             bar.close()
@@ -66,10 +76,29 @@ def _process_status(bar_size, worker_queue, error_queue=None, return_failed_task
                 error_queue.put(upd_value)
         else:
             bar.update(upd_value)
+            if meta is not None:
+                name, sub_total = meta
+                if name not in sub_bars:
+                    sub_bars[name] = ProgressBar(total=sub_total, desc=name, position=next_position)
+                    next_position += 1
+                sub_bars[name].update(upd_value)
 
 
 def _deserialize(func, task):
     return dill.loads(func)(task)
+
+
+def _attach_traceback(exc):
+    """Attach the worker-side traceback (as a string) to an exception.
+
+    multiprocessing pickles exceptions back to the parent without their __traceback__,
+    so we capture the formatted traceback in the worker and expose it as ``exc.traceback``.
+    """
+    try:
+        exc.traceback = traceback.format_exc()
+    except Exception:
+        pass
+    return exc
 
 
 def _func_wrapped(func, error_handling, set_error_value, worker_queue, disable, task, cnt=count(1),
@@ -85,7 +114,7 @@ def _func_wrapped(func, error_handling, set_error_value, worker_queue, disable, 
             if not disable:
                 worker_queue.put((1, task))
             if set_error_value is None:
-                return e
+                return _attach_traceback(e)
         return set_error_value
     else:
         if not disable:
@@ -103,27 +132,67 @@ def _func_wrapped(func, error_handling, set_error_value, worker_queue, disable, 
     return result
 
 
-def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
-                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
-                 return_failed_tasks, timeout=None
-                 ):
+def _execute(pool, pool_type, func, tasks, chunk_size, bar_size, disable, queue,
+             error_queue, return_failed_tasks, timeout, desc='DONE'):
+    """Run a prepared func over tasks on the given pool and drive the progress bar.
+
+    The pool is used but not closed here, so it can be a warm/reused pool.
+    """
     raised_exception = False
-    queue = mp.Manager().Queue()
-    error_queue = mp.Manager().Queue() if return_failed_tasks else None
-    len_tasks = get_len(tasks, total)
-    if need_serialize:
-        func = partial(_deserialize, func)
-    if not used_decorators:
-        func = partial(_func_wrapped, func, error_behavior, set_error_value, queue, disable)
-    bar_size = len_tasks
     thread = Thread(target=_process_status,
                     args=(bar_size, queue),
-                    kwargs={"error_queue": error_queue, 'return_failed_tasks': return_failed_tasks},
+                    kwargs={"error_queue": error_queue, 'return_failed_tasks': return_failed_tasks, 'desc': desc},
                     daemon=True,
                     )
     try:
         if not disable:
             thread.start()
+        if pool_type == 'map':
+            result = pool.map_async(func, tasks, chunksize=chunk_size).get(timeout=timeout)
+        else:
+            result = list()
+            method = getattr(pool, pool_type)
+            iter_result = method(func, tasks, chunksize=chunk_size)
+            while 1:
+                try:
+                    result.append(next(iter_result))
+                except StopIteration:
+                    break
+    except BaseException as e:
+        # BaseException so that KeyboardInterrupt/SystemExit also stop the status thread
+        # cleanly and are re-raised (instead of being swallowed by the return below).
+        raised_exception = e
+    finally:
+        # signal the status thread to stop and wait for it to finish
+        if thread.is_alive():
+            queue.put((None, -1 if raised_exception else None))
+            thread.join()
+        if raised_exception:
+            raise raised_exception
+        # drain error_queue if it exists
+        if return_failed_tasks:
+            error_tasks = list()
+            while True:
+                try:
+                    error_tasks.append(error_queue.get_nowait())
+                except Empty:
+                    break
+            return result, error_tasks
+    return result
+
+
+def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
+                 error_behavior, set_error_value, executor, need_serialize, maxtasksperchild, used_decorators,
+                 return_failed_tasks, timeout=None, desc='DONE'
+                 ):
+    bar_size = get_len(tasks, total)
+    if need_serialize:
+        func = partial(_deserialize, func)
+    with mp.Manager() as manager:
+        queue = manager.Queue()
+        error_queue = manager.Queue() if return_failed_tasks else None
+        if not used_decorators:
+            func = partial(_func_wrapped, func, error_behavior, set_error_value, queue, disable)
         if executor == 'threads':
             exc_pool = mp.pool.ThreadPool(n_cpu, initializer=init_worker,
                                           initargs=(queue, initializer, initargs))
@@ -132,36 +201,54 @@ def _do_parallel(func, pool_type, tasks, initializer, initargs, n_cpu, chunk_siz
                                                     processes=n_cpu, initializer=init_worker,
                                                     initargs=(queue, initializer, initargs))
         with exc_pool as p:
-            if pool_type == 'map':
-                result = p.map_async(func, tasks, chunksize=chunk_size).get(timeout=timeout)
-            else:
-                result = list()
-                method = getattr(p, pool_type)
-                iter_result = method(func, tasks, chunksize=chunk_size)
-                while 1:
-                    try:
-                        result.append(next(iter_result))
-                    except StopIteration:
-                        break
-    except Exception as e:
-        raised_exception = e
-    finally:
-        # stop thread
-        while thread.is_alive():
-            if raised_exception:
-                queue.put((None, -1))
-            else:
-                queue.put((None, None))
-        # clear queue
-        if raised_exception:
-            raise raised_exception
-        # get error_queue if exists
-        if return_failed_tasks:
-            error_tasks = list()
-            while error_queue.qsize():
-                error_tasks.append(error_queue.get())
-            return result, error_tasks
-    return result
+            return _execute(p, pool_type, func, tasks, chunk_size, bar_size, disable, queue,
+                            error_queue, return_failed_tasks, timeout, desc=desc)
+
+
+def _run_once(pool, manager, pool_type, func, tasks, chunk_size, total, disable,
+              error_behavior, set_error_value, need_serialize, return_failed_tasks, timeout, desc='DONE'):
+    """Run a single map/imap pass on an existing (warm) pool and manager."""
+    if need_serialize:
+        func = partial(_deserialize, func)
+    queue = manager.Queue()
+    error_queue = manager.Queue() if return_failed_tasks else None
+    wrapped = partial(_func_wrapped, func, error_behavior, set_error_value, queue, disable)
+    bar_size = get_len(tasks, total)
+    return _execute(pool, pool_type, wrapped, tasks, chunk_size, bar_size, disable, queue,
+                    error_queue, return_failed_tasks, timeout, desc=desc)
+
+
+def _run_with_retries(run_once, tasks, retries, error_behavior, set_error_value, return_failed_tasks):
+    """Run tasks, retrying the ones that raised, up to `retries` extra attempts.
+
+    `run_once(subset, desc)` must run in 'coerce' mode with set_error_value=None, so failed
+    tasks come back as exception instances that can be detected and re-submitted.
+    """
+    tasks = list(tasks)
+    results = list(run_once(tasks, 'DONE'))
+    pending = [i for i, r in enumerate(results) if isinstance(r, BaseException)]
+    attempt = 0
+    while pending and attempt < retries:
+        attempt += 1
+        subset = [tasks[i] for i in pending]
+        res = run_once(subset, f'RETRY {attempt}')
+        still_failed = []
+        for local_i, r in enumerate(res):
+            gi = pending[local_i]
+            results[gi] = r
+            if isinstance(r, BaseException):
+                still_failed.append(gi)
+        pending = still_failed
+    failed_tasks = [tasks[i] for i in pending]
+    if error_behavior == 'raise':
+        if pending:
+            raise results[pending[0]]
+    elif set_error_value is not None:
+        for i in pending:
+            results[i] = set_error_value
+    if return_failed_tasks:
+        return results, failed_tasks
+    return results
 
 
 def _stopit_wrapped(func, s, raise_exception, *args, **kwargs):
@@ -192,7 +279,7 @@ def _validate_args(error_behavior, tasks, total, executor):
 def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                  disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                  executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
-                 return_failed_tasks=False, timeout=None,
+                 return_failed_tasks=False, timeout=None, retries=0,
                  ):
     """
     An extension of the map method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -240,6 +327,10 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     timeout: float, optional
         If timeout is not None and the result does not arrive within timeout seconds then multiprocessing.TimeoutError
         is raised
+    retries: int, default 0
+        Number of extra attempts for tasks that raised an exception (including process_timeout).
+        Failed tasks are re-submitted up to `retries` times. Not compatible with
+        used_add_progress_decorator=True.
     Returns
     -------
     result: list
@@ -247,6 +338,16 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
     """
     _validate_args(error_behavior, tasks, total, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
+    if retries:
+        if used_add_progress_decorator:
+            raise ValueError('retries is not compatible with used_add_progress_decorator=True')
+
+        def run_once(subset, desc):
+            return _do_parallel(func, 'map', subset, initializer, initargs, n_cpu, chunk_size, context,
+                                len(subset), disable, 'coerce', None, executor, need_serialize,
+                                maxtasksperchild, False, False, timeout=timeout, desc=desc)
+
+        return _run_with_retries(run_once, tasks, retries, error_behavior, set_error_value, return_failed_tasks)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
                           used_add_progress_decorator, return_failed_tasks, timeout=timeout,
@@ -257,7 +358,7 @@ def progress_map(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_s
 def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=None, context=None, total=None,
                      disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                      executor='processes', need_serialize=False, maxtasksperchild=None,
-                     used_add_progress_decorator=False, return_failed_tasks=False, timeout=None,
+                     used_add_progress_decorator=False, return_failed_tasks=False, timeout=None, retries=0,
                      ):
     """
     An extension of the starmap method of the multiprocessing.Poll class that allows you to display
@@ -304,6 +405,10 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     timeout: float, optional
         If timeout is not None and the result does not arrive within timeout seconds then multiprocessing.TimeoutError
         is raised
+    retries: int, default 0
+        Number of extra attempts for tasks that raised an exception (including process_timeout).
+        Failed tasks are re-submitted up to `retries` times. Not compatible with
+        used_add_progress_decorator=True.
     Returns
     -------
     result: list
@@ -312,6 +417,16 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
     _validate_args(error_behavior, tasks, total, executor)
     func = partial(func_args_unpack, func)
     func = _func_prepare(func, process_timeout, need_serialize)
+    if retries:
+        if used_add_progress_decorator:
+            raise ValueError('retries is not compatible with used_add_progress_decorator=True')
+
+        def run_once(subset, desc):
+            return _do_parallel(func, 'map', subset, initializer, initargs, n_cpu, chunk_size, context,
+                                len(subset), disable, 'coerce', None, executor, need_serialize,
+                                maxtasksperchild, False, False, timeout=timeout, desc=desc)
+
+        return _run_with_retries(run_once, tasks, retries, error_behavior, set_error_value, return_failed_tasks)
     result = _do_parallel(func, 'map', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
                           used_add_progress_decorator, return_failed_tasks, timeout=timeout,
@@ -322,7 +437,7 @@ def progress_starmap(func, tasks, initializer=None, initargs=(), n_cpu=None, chu
 def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_size=1, context=None, total=None,
                   disable=False, process_timeout=None, error_behavior='raise', set_error_value=None,
                   executor='processes', need_serialize=False, maxtasksperchild=None, used_add_progress_decorator=False,
-                  return_failed_tasks=False,
+                  return_failed_tasks=False, retries=0,
                   ):
     """
     An extension of the imap method of the multiprocessing.Poll class that allows you to display the progress of tasks,
@@ -367,6 +482,10 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
     return_failed_tasks: bool, default False
         If True, the function will return a tuple of two lists: the first list will contain the results of the
         function execution,  the second list will contain the tasks that caused the exception.
+    retries: int, default 0
+        Number of extra attempts for tasks that raised an exception (including process_timeout).
+        Failed tasks are re-submitted up to `retries` times. Not compatible with
+        used_add_progress_decorator=True.
     Returns
     -------
     result: list
@@ -375,6 +494,16 @@ def progress_imap(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk_
 
     _validate_args(error_behavior, tasks, total, executor)
     func = _func_prepare(func, process_timeout, need_serialize)
+    if retries:
+        if used_add_progress_decorator:
+            raise ValueError('retries is not compatible with used_add_progress_decorator=True')
+
+        def run_once(subset, desc):
+            return _do_parallel(func, 'imap', subset, initializer, initargs, n_cpu, chunk_size, context,
+                                len(subset), disable, 'coerce', None, executor, need_serialize,
+                                maxtasksperchild, False, False, desc=desc)
+
+        return _run_with_retries(run_once, tasks, retries, error_behavior, set_error_value, return_failed_tasks)
     result = _do_parallel(func, 'imap', tasks, initializer, initargs, n_cpu, chunk_size, context, total, disable,
                           error_behavior, set_error_value, executor, need_serialize, maxtasksperchild,
                           used_add_progress_decorator, return_failed_tasks
@@ -443,3 +572,106 @@ def progress_imapu(func, tasks, initializer=None, initargs=(), n_cpu=None, chunk
                           used_add_progress_decorator, return_failed_tasks
                           )
     return result
+
+
+class Parallel:
+    """A reusable ("warm") pool of workers with progress bars.
+
+    Creating a process pool (and a multiprocessing.Manager) is expensive: it spawns
+    processes on every call. ``Parallel`` creates them once and reuses them across many
+    ``map``/``starmap``/``imap``/``imapu`` calls, which removes most of the per-call
+    overhead when you run many parallel operations in a row.
+
+    Example
+    -------
+    >>> with Parallel(n_cpu=8) as p:
+    ...     a = p.map(f, tasks1)
+    ...     b = p.map(g, tasks2)   # no new workers are spawned
+
+    Notes
+    -----
+    - Only the process pool is supported (no thread executor and no add_progress decorator
+      path, since those rely on a per-call worker queue set at pool creation time).
+    - Call ``close()`` when done, or use the context manager, to release the workers and the
+      manager process.
+    """
+
+    def __init__(self, n_cpu=None, initializer=None, initargs=(), context=None, maxtasksperchild=None):
+        self._closed = False
+        self._manager = mp.Manager()
+        self._pool = mp.get_context(context).Pool(processes=n_cpu, initializer=initializer,
+                                                  initargs=initargs, maxtasksperchild=maxtasksperchild)
+
+    def _check_open(self):
+        if self._closed:
+            raise RuntimeError('This Parallel pool has been closed.')
+
+    def _run(self, pool_type, func, tasks, chunk_size, total, disable, process_timeout,
+             error_behavior, set_error_value, need_serialize, return_failed_tasks, timeout, retries, starmap=False):
+        self._check_open()
+        _validate_args(error_behavior, tasks, total, 'processes')
+        if starmap:
+            func = partial(func_args_unpack, func)
+        func = _func_prepare(func, process_timeout, need_serialize)
+        if retries:
+            if pool_type == 'imap_unordered':
+                raise ValueError('retries is not supported for imapu (imap_unordered) because results are '
+                                 'not positionally aligned with the input tasks')
+
+            def run_once(subset, desc):
+                return _run_once(self._pool, self._manager, pool_type, func, subset, chunk_size, len(subset),
+                                 disable, 'coerce', None, need_serialize, False, timeout, desc=desc)
+
+            return _run_with_retries(run_once, tasks, retries, error_behavior, set_error_value, return_failed_tasks)
+        return _run_once(self._pool, self._manager, pool_type, func, tasks, chunk_size, total, disable,
+                         error_behavior, set_error_value, need_serialize, return_failed_tasks, timeout)
+
+    def map(self, func, tasks, chunk_size=None, total=None, disable=False, process_timeout=None,
+            error_behavior='raise', set_error_value=None, need_serialize=False,
+            return_failed_tasks=False, timeout=None, retries=0):
+        return self._run('map', func, tasks, chunk_size, total, disable, process_timeout, error_behavior,
+                         set_error_value, need_serialize, return_failed_tasks, timeout, retries)
+
+    def starmap(self, func, tasks, chunk_size=None, total=None, disable=False, process_timeout=None,
+                error_behavior='raise', set_error_value=None, need_serialize=False,
+                return_failed_tasks=False, timeout=None, retries=0):
+        return self._run('map', func, tasks, chunk_size, total, disable, process_timeout, error_behavior,
+                         set_error_value, need_serialize, return_failed_tasks, timeout, retries, starmap=True)
+
+    def imap(self, func, tasks, chunk_size=1, total=None, disable=False, process_timeout=None,
+             error_behavior='raise', set_error_value=None, need_serialize=False,
+             return_failed_tasks=False, retries=0):
+        return self._run('imap', func, tasks, chunk_size, total, disable, process_timeout, error_behavior,
+                         set_error_value, need_serialize, return_failed_tasks, None, retries)
+
+    def imapu(self, func, tasks, chunk_size=1, total=None, disable=False, process_timeout=None,
+              error_behavior='raise', set_error_value=None, need_serialize=False,
+              return_failed_tasks=False, retries=0):
+        return self._run('imap_unordered', func, tasks, chunk_size, total, disable, process_timeout, error_behavior,
+                         set_error_value, need_serialize, return_failed_tasks, None, retries)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._pool.close()
+        self._pool.join()
+        self._manager.shutdown()
+
+    def terminate(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._pool.terminate()
+        self._pool.join()
+        self._manager.shutdown()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.terminate()
+        else:
+            self.close()
+        return False

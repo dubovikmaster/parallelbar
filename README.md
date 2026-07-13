@@ -10,6 +10,7 @@
 * [Usage](#Usage)
 * [Exception handling](#exception-handling)
 * [Changelog](#Changelog)
+   * [New in version 2.6](#new-in-version-2.6)
    * [New in version 2.5](#new-in-version-2.5)
    * [New in version 2.4](#new-in-version-2.4)
    * [New in version 2.3](#new-in-version-2.3)
@@ -78,10 +79,97 @@ You can also easily use **progress_imap** and **progress_imapu** analogs of the 
 %%time
 if __name__=='__main__':
     tasks = [20 + i for i in range(15)]
-    result = progress_imap(fibonacci, tasks, chunk_size=1, core_progress=False)
+    result = progress_imap(fibonacci, tasks, chunk_size=1)
 ```
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/one_bar_imap.gif)
+
+### Reusable (warm) pool: `Parallel` (since 2.6)
+
+Every call to `progress_map`/`progress_imap`/... creates a fresh process pool (and a
+`multiprocessing.Manager`), which spawns processes each time. If you run many parallel
+operations in a row, this overhead dominates. The `Parallel` class creates the workers once
+and reuses them:
+
+```python
+from parallelbar import Parallel
+from parallelbar.tools import cpu_bench
+
+
+def add(a, b):
+    return a + b
+
+
+def risky(n):
+    if n % 10 == 0:
+        raise ValueError(f'bad value: {n}')
+    return n * n
+
+
+if __name__ == '__main__':
+    # Create the pool once and reuse it for several operations.
+    with Parallel(n_cpu=4) as par:
+        # 1) plain map
+        squares = par.map(cpu_bench, range(1000))
+
+        # 2) starmap (each task is a tuple of arguments)
+        sums = par.starmap(add, [(1, 2), (3, 4), (5, 6)])
+        # -> [3, 7, 11]
+
+        # 3) imap (ordered) / imapu (unordered) also available
+        ordered = par.imap(cpu_bench, range(1000))
+
+        # 4) collect exceptions instead of raising, and get the failed tasks
+        results, failed = par.map(
+            risky, range(50),
+            error_behavior='coerce',
+            return_failed_tasks=True,
+        )
+        # results[i] is either n*n or a ValueError instance (with .traceback)
+        # failed == [0, 10, 20, 30, 40]
+
+        # 5) automatically retry transient failures up to 3 times
+        recovered = par.map(risky, range(1, 10), retries=3)
+    # leaving the `with` block closes the workers and the manager process
+```
+
+You can also manage the lifetime manually instead of using the context manager:
+
+```python
+par = Parallel(n_cpu=4)
+try:
+    result = par.map(cpu_bench, range(1000))
+finally:
+    par.close()   # or par.terminate() to stop immediately
+```
+
+For a workload of many small sequential `map` calls this is dramatically faster (an order of
+magnitude in a simple benchmark) because process startup happens only once. `Parallel`
+supports `map`, `starmap`, `imap`, `imapu` with the same options as the functional API
+(`error_behavior`, `set_error_value`, `return_failed_tasks`, `process_timeout`,
+`need_serialize`, `retries`, ...).
+
+Note: `Parallel` uses the process pool only (no thread executor and no `add_progress`
+decorator path). `retries` is available for `map`/`starmap`/`imap` (not `imapu`).
+
+### Retrying failed tasks (since 2.6)
+
+Pass `retries=N` to automatically re-submit tasks that raised an exception (including tasks
+that hit `process_timeout`). Retry attempts are shown as separate `RETRY N` bars:
+
+```python
+if __name__ == '__main__':
+    # each failing task is retried up to 3 more times before giving up
+    result = progress_map(unstable_task, tasks, retries=3)
+```
+
+After the retries are exhausted, the remaining failures are handled according to
+`error_behavior` (`raise` re-raises the last exception; `coerce` puts `set_error_value`/the
+exception into the result). Combine with `return_failed_tasks=True` to also get the list of
+tasks that still failed after all attempts. `retries` works for `progress_map`,
+`progress_starmap`, `progress_imap` and the corresponding `Parallel` methods. It is not
+available for `imapu`/`imap_unordered`, because retried results cannot be positionally aligned
+with the input (for that case use a per-call retry inside the worker function instead).
 
 <a name="exception-handling"></a>
 ## Exception handling
@@ -98,7 +186,7 @@ def foo(n):
         time.sleep(1)
     return n
 if __name__=='__main__':
-	res = progress_map(foo, range(20), process_timeout=5, n_cpu=8)
+	res = progress_map(foo, range(20), process_timeout=5, n_cpu=8, error_behavior='coerce')
 ```
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/error_bar_2.gif)
 
@@ -108,23 +196,24 @@ print(res)
 	[0, 1, 2, 3, 4, ZeroDivisionError('division by zero'), 6, 7, 8, 9, 10, 11, 12,
      13, 14, 15, 16, ZeroDivisionError('division by zero'), 18, 19]
 ```
- In the resulting array, we have exceptions in the corresponding places. Also, we can see the exception traceback:
+ In the resulting array, we have exceptions in the corresponding places (to collect exceptions into
+ the result instead of raising, use `error_behavior='coerce'`). The worker-side traceback of each
+ coerced exception is available as a string via `.traceback`:
 ```python
 print(res[5].traceback)
 Traceback (most recent call last):
-  File "/home/padu/anaconda3/envs/work/lib/python3.9/site-packages/pebble/common.py", line 174, in process_execute
-    return function(*args, **kwargs)
-  File "/home/padu/anaconda3/envs/work/lib/python3.9/site-packages/parallelbar/parallelbar.py", line 48, in _process
+  File ".../parallelbar/parallelbar.py", line ..., in _func_wrapped
     result = func(task)
-  File "/tmp/ipykernel_70395/285585760.py", line 3, in foo
+  File "<stdin>", line 3, in foo
     1/0
 ZeroDivisionError: division by zero
 ```
-From which concept at what place in the code the exception occurred. 
-Let's add a timeout of 1.5 seconds for each process. If the process execution time exceeds 1.5 seconds, an appropriate exception will be raised and handled. In this case, the process will restart and continue to work (thanks to **pebble**)
+From which you can tell where in the code the exception occurred.
+Let's add a timeout of 1.5 seconds for each task. If a task runs longer than 1.5 seconds, a
+`TimeoutError` will be raised and handled:
 ```python
 if __name__=='__main__':
-	res = progress_map(foo, range(20), process_timeout=1.5, n_cpu=8)
+	res = progress_map(foo, range(20), process_timeout=1.5, n_cpu=8, error_behavior='coerce')
 ```
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/error_bar_1.gif)
 ```python
@@ -134,8 +223,40 @@ print(res)
 ```
 
 Exception handling has also been added to methods **progress_imap** and **progress_imapu**.
+
+> **Note on `process_timeout`.** The timeout is implemented in-process: it interrupts the running
+> Python code by raising an exception (via a signal). This is a *soft* timeout — if a task is stuck
+> inside a C extension or a blocking system call that does not return control to the Python
+> interpreter, the timeout cannot fire until the call returns. It does not forcibly kill and restart
+> the worker process. For CPU-bound pure-Python tasks it works as expected.
+
 <a name="Changelog"></a>
 ## Changelog
+
+<a name="new-in-version-2.6"></a>
+### Version 2.6
+- Coerced exceptions now carry the worker-side traceback as a string in `exc.traceback`, so
+  `result[i].traceback` can be inspected when `error_behavior='coerce'` (works for the functional
+  API and the `add_progress` decorator).
+- `KeyboardInterrupt` (Ctrl+C) now reliably stops the status thread, re-raises, and tears down the
+  worker pool and manager process instead of leaving orphaned processes behind.
+- Added the `Parallel` class — a reusable ("warm") pool of workers. Creating a pool spawns processes on
+  every call; `Parallel` creates them once and reuses them across many `map`/`starmap`/`imap`/`imapu`
+  calls, giving a large speedup for many sequential parallel operations (see the [Usage](#Usage) section).
+- Added the `retries` parameter to `progress_map`, `progress_starmap` and `progress_imap` (and to the
+  matching `Parallel` methods). Tasks that raise an exception (including `process_timeout`) are
+  automatically re-submitted up to `retries` times; the retry attempts are shown as separate `RETRY N`
+  bars. Not available for `imapu`/`imap_unordered`, since retried results can't be positionally aligned.
+- Added `separate_bar` (plus `desc` and `total`) parameters to the `add_progress` decorator. When
+  `separate_bar=True`, each decorated function gets its own progress bar in addition to the aggregate
+  `DONE` bar (see the [Usage](#Usage) section).
+- Bug fixes in the internal engine:
+  - Replaced a busy-wait loop that stopped the status thread (it spun a CPU core at 100% and flooded the
+    queue) with a single sentinel and `thread.join()`.
+  - Wrapped the `multiprocessing.Manager` in a context manager and reduced it to a single manager for
+    both queues, fixing a lingering manager-process leak on every call.
+  - Replaced the unreliable `queue.qsize()` drain of failed tasks (which can raise `NotImplementedError`
+    on macOS) with a safe `get_nowait()` loop.
 
 <a name="new-in-version-2.5"></a>
 ### Version 2.5
@@ -202,6 +323,52 @@ if __name__=='__main__':
 Out:
 
 ![](https://raw.githubusercontent.com/dubovikmaster/parallelbar/main/gifs/add_progress_example.gif)
+
+### Separate progress bar per function (since 2.6)
+
+By default every `@add_progress` function feeds the single aggregate `DONE` bar. If your
+worker calls several functions and you want to track each of them independently, pass
+`separate_bar=True`. Each decorated function then gets its own bar in addition to the
+aggregate `DONE` bar:
+
+- `desc` — label of the separate bar (defaults to the function name);
+- `total` — total number of calls of that function across **all** tasks. If omitted, the
+  bar is shown without a percentage (as a plain counter).
+
+```python
+import time
+from parallelbar import progress_map
+from parallelbar.wrappers import add_progress
+
+
+# foo is called 10 + 20 + 30 + 40 = 100 times across all tasks
+@add_progress(separate_bar=True, total=100, desc='foo')
+def foo(n):
+    time.sleep(0.02)
+    return n
+
+
+# baz is called 10 times per task * 4 tasks = 40 times
+@add_progress(separate_bar=True, total=40, desc='baz')
+def baz(n):
+    time.sleep(0.02)
+    return n
+
+
+def pipeline(x):
+    a = [foo(i) for i in range(x)]
+    b = [baz(i) for i in range(10)]
+    return len(a) + len(b)
+
+
+if __name__ == '__main__':
+    # aggregate DONE total = foo (100) + baz (40) = 140
+    progress_map(pipeline, [10, 20, 30, 40], n_cpu=4,
+                 total=140, used_add_progress_decorator=True)
+```
+
+This renders three live bars: `DONE` (aggregate, 140), `foo` (100) and `baz` (40).
+Note that errors from all functions are still collected into a single shared `ERROR` bar.
 
 You can also use the `stopit_after_timeout` decorator separately:
 ```python

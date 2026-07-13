@@ -3,6 +3,7 @@ import _thread as thread
 import platform
 import os
 import signal
+import traceback
 from functools import wraps
 import time
 from itertools import count
@@ -66,11 +67,38 @@ def init_worker(worker_queue, init_progress, init_progress_args):
         init_progress(*init_progress_args)
 
 
-def add_progress(error_handling='raise', set_error_value=None, timeout=None):
+def add_progress(error_handling='raise', set_error_value=None, timeout=None, desc=None, total=None,
+                 separate_bar=False):
+    """
+    Decorator that reports the progress of a function executed inside a parallelbar worker.
+
+    Parameters
+    ----------
+    error_handling: str, default 'raise'
+        'raise' or 'coerce', same semantics as in progress_map.
+    set_error_value: Any, default None
+        Value returned on error when error_handling='coerce'.
+    timeout: float or None, default None
+        Per-call timeout in seconds.
+    desc: str or None, default None
+        Label of the separate progress bar. If None, func.__name__ is used.
+        Only matters when separate_bar=True.
+    total: int or None, default None
+        Total number of calls of the decorated function across all tasks. Used as the
+        total of the separate bar. If None, the bar is shown without a percentage.
+        Only matters when separate_bar=True.
+    separate_bar: bool, default False
+        If True, a dedicated progress bar (keyed by desc/func.__name__) is displayed for
+        this function in addition to the aggregate 'DONE' bar. If False, the behavior is
+        unchanged: updates only feed the aggregate 'DONE' bar.
+    """
     state = ProgressStatus()
     cnt = count(1)
 
     def actual_decorator(func):
+        name = desc if desc is not None else func.__name__
+        meta = (name, total) if separate_bar else None
+
         @wraps(func)
         def wrapper(*args, **kwargs):
             try:
@@ -83,8 +111,15 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     _WORKER_QUEUE.put((None, -1))
                     raise
                 else:
-                    _WORKER_QUEUE.put((1, _make_args(*args, **kwargs)))
+                    if meta is None:
+                        _WORKER_QUEUE.put((1, _make_args(*args, **kwargs)))
+                    else:
+                        _WORKER_QUEUE.put((1, _make_args(*args, **kwargs), meta))
                     if set_error_value is None:
+                        try:
+                            e.traceback = traceback.format_exc()
+                        except Exception:
+                            pass
                         return e
                 return set_error_value
             else:
@@ -97,7 +132,10 @@ def add_progress(error_handling='raise', set_error_value=None, timeout=None):
                     state.next_update += max(int((delta_i / delta_t) * .25), 1)
                     state.last_update_val = updated
                     state.last_update_t = time_now
-                    _WORKER_QUEUE.put_nowait((0, delta_i))
+                    if meta is None:
+                        _WORKER_QUEUE.put_nowait((0, delta_i))
+                    else:
+                        _WORKER_QUEUE.put_nowait((0, delta_i, meta))
             return result
 
         return wrapper
