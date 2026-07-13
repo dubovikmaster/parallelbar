@@ -1,0 +1,12 @@
+[run]
+source = parallelbar
+concurrency = multiprocessing,thread
+parallel = true
+sigterm = true
+
+[report]
+show_missing = true
+exclude_lines =
+    pragma: no cover
+    if platform.system() == 'Windows':
+    thread.interrupt_main()

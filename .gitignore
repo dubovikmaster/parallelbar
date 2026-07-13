@@ -128,3 +128,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Local helper/scratch scripts (smoke tests, demos, benchmarks)
+scratch/
